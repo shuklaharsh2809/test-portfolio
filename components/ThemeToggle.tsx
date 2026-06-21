@@ -1,37 +1,39 @@
 "use client";
 
 import { Moon, SunMedium } from "lucide-react";
-import { useReducer } from "react";
-
-type Theme = "light" | "dark";
+import { useEffect, useState } from "react";
 
 const STORAGE_KEY = "theme";
 
-function applyTheme(theme: Theme) {
-  document.documentElement.classList.toggle("dark", theme === "dark");
-  window.localStorage.setItem(STORAGE_KEY, theme);
-}
-
 export default function ThemeToggle() {
-  const [, rerender] = useReducer((value: number) => value + 1, 0);
-  const isDark =
-    typeof document !== "undefined" &&
-    document.documentElement.classList.contains("dark");
+  // Starts `false` on both server and first client render to avoid a
+  // hydration mismatch; the effect then syncs to the real applied theme.
+  const [isDark, setIsDark] = useState(false);
+
+  useEffect(() => {
+    setIsDark(document.documentElement.classList.contains("dark"));
+  }, []);
+
+  function toggle() {
+    const next = !isDark;
+    document.documentElement.classList.toggle("dark", next);
+    window.localStorage.setItem(STORAGE_KEY, next ? "dark" : "light");
+    setIsDark(next);
+  }
 
   return (
     <button
       type="button"
-      onClick={() => {
-        const nextTheme: Theme = isDark ? "light" : "dark";
-        applyTheme(nextTheme);
-        rerender();
-      }}
-      className="inline-flex items-center gap-2 rounded-full border border-border bg-background px-3 py-2 text-sm text-muted"
+      onClick={toggle}
+      className="inline-flex size-9 items-center justify-center rounded-full border border-border bg-background text-muted transition-colors hover:text-foreground"
       aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
       aria-pressed={isDark}
     >
-      {isDark ? <SunMedium className="size-4" /> : <Moon className="size-4" />}
-      <span>{isDark ? "Light mode" : "Dark mode"}</span>
+      {isDark ? (
+        <SunMedium className="size-4" />
+      ) : (
+        <Moon className="size-4" />
+      )}
     </button>
   );
 }

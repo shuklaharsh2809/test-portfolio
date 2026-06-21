@@ -110,29 +110,24 @@ const projects = [
 
 const skillGroups = [
   {
-    label: "Mobile Development",
-    value:
-      "React Native, iOS development, Android development, Xcode, Android Studio, React Navigation, in-app purchase flows",
+    label: "Mobile",
+    value: "React Native, iOS & Android, Xcode, Android Studio, in-app purchases",
   },
   {
     label: "Languages & Frameworks",
-    value:
-      "JavaScript, TypeScript, React, Next.js, Remix, Java, HTML5, CSS3",
+    value: "TypeScript, JavaScript, React, Next.js, Remix, Java",
   },
   {
     label: "Backend & APIs",
-    value:
-      "Firebase Realtime Database, Firebase Authentication, Firebase Cloud Messaging, REST APIs, API integrations",
+    value: "Firebase (Realtime DB, Auth, Cloud Messaging), REST APIs",
   },
   {
     label: "AI & Integrations",
-    value:
-      "OpenAI API, Grok API, Google Places API, Maps API, geolocation services, Firebase-backed systems, Slack, WhatsApp, Jira, Notion",
+    value: "OpenAI, Grok, Google Places & Maps, geolocation, Slack, WhatsApp, Jira, Notion",
   },
   {
-    label: "Developer Productivity Systems",
-    value:
-      "AI workflows and automation, PR review automation, issue handling workflows, Git version control, delivery acceleration, performance optimization, SEO optimization",
+    label: "Productivity",
+    value: "AI workflow automation, PR-review automation, Git, performance & SEO",
   },
 ] as const;
 
@@ -140,7 +135,7 @@ const personStructuredData = {
   "@context": "https://schema.org",
   "@type": "Person",
   name: "Harsh Shukla",
-  jobTitle: "Product Developer",
+  jobTitle: "Software Developer",
   email: "mailto:shuklaharsh42809@gmail.com",
   telephone: "+91-7234-885-924",
   address: {
@@ -235,35 +230,30 @@ export default function Home() {
               />
             </div>
 
-            <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-border bg-surface px-3 py-1.5 text-sm text-muted">
+            <div className="mt-6 inline-flex items-center gap-2 rounded-full border border-border bg-surface px-3 py-1.5 text-sm text-muted">
               <span
                 className="size-2.5 rounded-full bg-emerald-500"
                 aria-hidden="true"
               />
-              <span>Available now</span>
+              <span>Available for work</span>
             </div>
 
             <p className="mt-6 text-sm font-medium uppercase tracking-[0.16em] text-muted">
-              Product Developer
+              Software Developer
             </p>
             <h1 className="mt-3 text-4xl font-semibold tracking-[-0.04em] text-foreground [font-family:var(--font-family-serif)] sm:text-5xl [text-wrap:balance]">
               Harsh Shukla
             </h1>
 
-            <p className="mt-3 text-base text-foreground">
-              Building mobile, web, and AI-powered products.
+            <p className="mt-5 max-w-2xl text-lg leading-8 text-muted [text-wrap:pretty]">
+              I&apos;m a software developer with nearly two years shipping
+              production apps across iOS, Android, and the web. I build React
+              Native products, Next.js applications, Firebase-backed systems,
+              and AI-powered workflows that help teams ship faster.
             </p>
 
-            <p className="mt-3 text-sm text-muted [text-wrap:balance]">
-              React Native · Next.js · Firebase · AI integrations · Workflow automation
-            </p>
-
-            <p className="mt-3 text-sm text-muted">
+            <p className="mt-4 text-sm text-muted">
               Lucknow, Uttar Pradesh, India
-            </p>
-
-            <p className="mt-4 max-w-2xl text-sm text-foreground">
-              Open to full-time product roles and select freelance work.
             </p>
 
             <div className="mt-6 flex flex-wrap justify-center gap-x-3 gap-y-2 text-sm text-muted">
@@ -278,14 +268,6 @@ export default function Home() {
                 </span>
               ))}
             </div>
-
-            <p className="mt-8 max-w-3xl text-lg leading-8 text-muted">
-              Product developer with nearly 2 years of experience as a software
-              developer shipping production applications across iOS, Android,
-              and the web. I build React Native products, Next.js web
-              applications, AI-powered features, Firebase-backed systems, and
-              developer productivity workflows that help teams ship faster.
-            </p>
           </div>
         </header>
 
