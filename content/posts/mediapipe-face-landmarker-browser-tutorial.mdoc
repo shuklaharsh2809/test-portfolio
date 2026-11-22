@@ -9,10 +9,13 @@ tags:
   - Computer Vision
   - MediaPipe
   - Privacy
+cover: /blog/mediapipe-face-landmarker-browser-tutorial/cover.jpg
 ---
 Most "AI photo analysis" apps upload your selfie to a server. For something as personal as a face, that's a hard sell. The good news: modern browsers can run real computer-vision models locally, so **the photo never leaves the device.**
 
 I built [GlowCheck](https://glow-check-mu.vercel.app) this way. It detects facial landmarks with **MediaPipe Face Landmarker**, measures proportions and symmetry, and builds a report, all inside the browser tab. This post covers how to set that up in TypeScript and the practical lessons that tutorials usually skip.
+
+![GlowCheck landing page with an example face analysis card, showing that photos are captured and analyzed locally](/blog/mediapipe-face-landmarker-browser-tutorial/glowcheck-landing.jpg)
 
 ## Why run AI on the device?
 
@@ -100,6 +103,8 @@ Each landmark has `x` and `y` normalized to 0–1 (multiply by the image's `natu
 ## Step 4: Reject bad input before you measure
 
 This is where most demo projects fall down. The model *will* return landmarks for a blurry, tilted, eyes-closed photo, and your measurements will be confidently wrong. Check first:
+
+![Pipeline: the photo stays in the browser, MediaPipe Face Landmarker runs on device, then checks for one face, open eyes, head pose and light before measuring 478 landmarks](/blog/mediapipe-face-landmarker-browser-tutorial/validation-pipeline.jpg)
 
 ```ts
 const blink = blendshapes

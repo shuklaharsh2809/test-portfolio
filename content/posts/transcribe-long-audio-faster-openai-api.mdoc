@@ -9,6 +9,7 @@ tags:
   - OpenAI
   - Speech-to-Text
   - TypeScript
+cover: /blog/transcribe-long-audio-faster-openai-api/cover.jpg
 ---
 If you send a two-hour recording to a speech-to-text API as one file, you are making the slowest possible version of the request. The whole file has to upload, the whole file is processed in one go, and if anything fails near the end you start again from zero.
 
@@ -25,6 +26,8 @@ A single long transcription request has three problems:
 - **All-or-nothing failure.** A network blip at minute 95 throws away the whole request.
 
 Chunking fixes all three. Each chunk is small, chunks run side by side, and a failed chunk is retried on its own.
+
+![Timeline comparing one long transcription request with twelve audio chunks processed four at a time, finishing in about a quarter of the time](/blog/transcribe-long-audio-faster-openai-api/sequential-vs-parallel.jpg)
 
 ## Step 1: Split the audio into chunks
 
