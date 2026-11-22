@@ -1,0 +1,155 @@
+---
+title: How to Transcribe Long Audio Faster with the OpenAI API (Chunking + Parallel Processing)
+summary: >-
+  Transcribe long audio faster with the OpenAI API: split recordings into chunks, process them in parallel, and stitch the transcript. TypeScript code included.
+publishedAt: 2026-11-22
+draft: false
+tags:
+  - AI
+  - OpenAI
+  - Speech-to-Text
+  - TypeScript
+---
+If you send a two-hour recording to a speech-to-text API as one file, you are making the slowest possible version of the request. The whole file has to upload, the whole file is processed in one go, and if anything fails near the end you start again from zero.
+
+At Appeneure, our team ran into exactly this on **OneKey Notes**, an AI voice-notes app where people record meetings and lectures that run from 30 minutes to 2 hours. The fix was not a faster model. It was changing the shape of the work: **split the audio into chunks and transcribe them concurrently.**
+
+This post walks through that approach with the OpenAI API and TypeScript.
+
+## Why one big file is slow
+
+A single long transcription request has three problems:
+
+- **It is sequential by design.** One request means one stream of work. The total time grows with the length of the recording.
+- **Upload limits.** Speech-to-text endpoints cap the size of a single upload. OpenAI's transcription endpoint has a per-file limit, so long recordings often have to be split anyway (check the current limit in the [speech-to-text docs](https://platform.openai.com/docs/guides/speech-to-text)).
+- **All-or-nothing failure.** A network blip at minute 95 throws away the whole request.
+
+Chunking fixes all three. Each chunk is small, chunks run side by side, and a failed chunk is retried on its own.
+
+## Step 1: Split the audio into chunks
+
+`ffmpeg` can cut a file into fixed-length segments without re-encoding, which is fast:
+
+```bash
+mkdir -p chunks
+ffmpeg -i recording.m4a -f segment -segment_time 600 -c copy chunks/part_%03d.m4a
+```
+
+This produces 10-minute pieces named `part_000.m4a`, `part_001.m4a`, and so on. The zero-padded names matter: they sort in the right order, which we rely on when stitching.
+
+**Choosing a chunk length:** shorter chunks give more parallelism but more boundaries. Somewhere between 5 and 10 minutes is a good starting point. If cutting mid-word is a problem for your content, split on silence instead (ffmpeg's `silencedetect` filter can find the gaps).
+
+## Step 2: Transcribe one chunk
+
+```ts
+import fs from "node:fs";
+import OpenAI from "openai";
+
+const client = new OpenAI(); // reads OPENAI_API_KEY from the environment
+
+async function transcribeChunk(path: string, prompt: string) {
+  const result = await client.audio.transcriptions.create({
+    file: fs.createReadStream(path),
+    model: "gpt-4o-transcribe", // or the speech-to-text model you use
+    prompt,
+  });
+  return result.text;
+}
+```
+
+The `prompt` parameter is your friend. Pass a short glossary of names, product terms and jargon that appear in the recording, and the model spells them consistently across every chunk.
+
+## Step 3: Run chunks in parallel, with a limit
+
+Firing every chunk at once with `Promise.all` works for a few chunks, but a long recording can mean dozens of requests, and you will hit rate limits. A small worker pool keeps a fixed number in flight:
+
+```ts
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+
+  async function worker() {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await fn(items[index], index);
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+```
+
+Each result is written to its own index, so the output stays in the original order even though chunks finish in any order.
+
+## Step 4: Retry failed chunks, not the whole job
+
+```ts
+async function withRetry<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (attempt >= attempts) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 1000 * 2 ** attempt));
+    }
+  }
+}
+```
+
+Exponential backoff (2s, 4s, …) gives a rate-limited or flaky request room to recover. A failure in one chunk no longer costs you the other forty minutes of work.
+
+## Step 5: Stitch the transcript back together
+
+```ts
+const GLOSSARY = "OneKey, Appeneure, React Native, RevenueCat";
+
+const files = fs
+  .readdirSync("chunks")
+  .filter((name) => name.endsWith(".m4a"))
+  .sort();
+
+const texts = await mapWithConcurrency(files, 4, (name) =>
+  withRetry(() => transcribeChunk(`chunks/${name}`, GLOSSARY)),
+);
+
+const transcript = texts.join(" ");
+```
+
+With four workers, the total time is roughly the time of the slowest batch instead of the sum of every chunk. That is the whole trick.
+
+## A trade-off: context across chunk boundaries
+
+When chunks are transcribed one after another, you can pass the end of the previous chunk's text as the `prompt` for the next one, which helps continuity. In parallel, the previous chunk is not done yet, so you cannot. In practice a shared glossary prompt recovers most of the consistency, and the speed gain is worth far more than a slightly rougher boundary every 10 minutes.
+
+## Doing this from a mobile app
+
+On mobile, do not chunk and upload from the phone. Upload the recording once to your backend, and run the split, transcription and stitching there. The phone stays responsive, the API key stays on the server (more on that in [how to add AI features to a React Native app without exposing your API key](/blog/react-native-ai-api-key-security)), and you can show progress as chunks complete.
+
+The same pattern works for any step after transcription. Summaries and AI-enhanced notes can also run per chunk in parallel, then be merged in a final, short request.
+
+## Key takeaways
+
+- Long audio is slow because a single request is sequential. Split it.
+- Use `ffmpeg -f segment` for fast, order-preserving chunks.
+- Run chunks through a **bounded** worker pool to stay inside rate limits.
+- Retry per chunk with backoff, so one failure does not restart the job.
+- Use a shared glossary `prompt` to keep names consistent across chunks.
+
+## FAQ
+
+### How long should each audio chunk be?
+
+Start with 5 to 10 minutes. Shorter chunks increase parallelism but add more boundaries; longer chunks reduce boundaries but take longer to process each.
+
+### Does chunking reduce transcription accuracy?
+
+Slightly, at the boundaries, where a word can be cut in half. Splitting on silence and passing a glossary prompt keep the impact small.
+
+### How many chunks should run at once?
+
+As many as your API rate limits allow. Four to eight concurrent requests is a sensible default; raise it if you have headroom.

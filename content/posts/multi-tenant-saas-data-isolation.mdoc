@@ -1,0 +1,141 @@
+---
+title: 'Multi-Tenant SaaS Architecture: How to Keep Each Customer''s Data Isolated'
+summary: >-
+  Keep each customer's data isolated in a multi-tenant SaaS: scoped queries, session-derived tenants, database constraints and isolation tests.
+publishedAt: 2026-11-22
+draft: false
+tags:
+  - SaaS
+  - Architecture
+  - PostgreSQL
+  - Security
+---
+In a multi-tenant SaaS, many customers share one application and one database. That's what makes SaaS affordable to run, and it's also what makes one bug catastrophic: **customer A seeing customer B's data.** No feature is worth that.
+
+I've built two multi-tenant products recently: [FitGrid](https://fitgrid-kappa.vercel.app), a gym management platform for multi-branch chains, and [HostelCare](https://github.com/shuklaharsh2809/hostel-care), a system for owners running several hostels. Both treat tenant isolation as a design requirement, not a code-review hope. Here are the patterns that make it reliable.
+
+## Pick a tenancy model
+
+There are three common approaches:
+
+1. **Database per tenant.** Strongest isolation, highest operational cost.
+2. **Schema per tenant.** A middle ground, but migrations multiply.
+3. **Shared tables with a tenant column.** Every row carries an `organization_id`. The cheapest and most common approach, and the one that needs the most discipline.
+
+FitGrid and HostelCare both use **shared tables**. Everything below is about making that safe.
+
+## Model the hierarchy explicitly
+
+Real businesses aren't flat. In both apps the shape is:
+
+```
+Organization (the tenant) → Branch → records (members, rooms, invoices…)
+```
+
+A **user** is a global identity; their access to an organization comes from a **membership** with a role. Staff can be limited to specific branches. Writing this down early prevents a whole class of "can a branch manager see that?" bugs later.
+
+## 1. Derive the tenant from the session, never from the request
+
+The tenant ID must come from the authenticated user, not from a URL parameter, a header or the request body that a client controls:
+
+```ts
+// ✅ tenant comes from the verified session
+const orgId = currentUser.orgId;
+
+// ❌ tenant comes from the client
+const orgId = req.query.orgId;
+```
+
+HostelCare's API reloads the user from the database **on every request**, inside a global auth guard. If an owner removes a staff member or changes their role, it applies on the very next request, not when a token expires. FitGrid re-resolves the active membership the same way.
+
+## 2. Scope every query, in one place
+
+Every read and write includes the tenant filter. Don't rely on remembering it in each handler; put it in shared helpers:
+
+```ts
+import { and, eq } from "drizzle-orm";
+import { NotFoundException } from "@nestjs/common";
+
+export async function getStudent(user: CurrentUser, id: string) {
+  const [student] = await db
+    .select()
+    .from(students)
+    .where(and(eq(students.orgId, user.orgId), eq(students.id, id)))
+    .limit(1);
+
+  if (!student) throw new NotFoundException("Student not found");
+  return student;
+}
+```
+
+Branch-restricted users get one more condition on top of the organization filter.
+
+## 3. Return "not found", not "forbidden"
+
+When a user asks for a record outside their tenant, respond exactly as if it doesn't exist. A `403 Forbidden` confirms the ID is real and belongs to someone else; a `404` reveals nothing. Both FitGrid and HostelCare do this for out-of-scope records.
+
+## 4. Let the database enforce it too
+
+Application code has bugs. Constraints are a second line of defense. A **composite foreign key** makes it impossible for a child row to point at a parent in a different organization:
+
+```sql
+-- branches must be unique per (org_id, id) for this to work
+ALTER TABLE branches ADD CONSTRAINT branches_org_id_id_key UNIQUE (org_id, id);
+
+ALTER TABLE rooms
+  ADD CONSTRAINT rooms_branch_same_org_fk
+  FOREIGN KEY (org_id, branch_id) REFERENCES branches (org_id, id);
+```
+
+Even if a bug tries to attach a room in organization A to a branch in organization B, PostgreSQL refuses the insert. FitGrid uses composite foreign keys, same-organization triggers for optional references, and CHECK constraints for things like "stock can't go negative".
+
+PostgreSQL **Row-Level Security** is another option for enforcing the tenant filter at the database level. It's worth considering, especially if many services query the same tables.
+
+## 5. Keep permissions explicit
+
+Tenant isolation answers "which organization?"; roles answer "what can this person do inside it?". Check permissions first, before any query runs:
+
+```ts
+requirePermission(user, "billing.refund"); // throws for roles without it
+```
+
+In FitGrid, a receptionist can take payments but can't issue refunds, and health notes or staff pay are hidden and write-protected from roles without access.
+
+## 6. Test isolation like a feature
+
+The most valuable tests in a multi-tenant app are the ones that try to break isolation:
+
+- Sign in as a user in organization A and request organization B's records by ID. Expect **404**.
+- Try to update or delete B's records from A. Expect nothing to change.
+- Revoke a user's branch access and confirm it's enforced on the **next** request.
+- Try a cross-tenant URL end-to-end in the browser.
+
+FitGrid goes one step further with **mutation checks**: deliberately removing the organization filter or the branch-scope check makes the test suite fail. If you can delete a security check and every test still passes, the tests aren't protecting you.
+
+## A few smaller lessons
+
+- **Store money as integers** (paise or cents). Floating-point currency bugs are miserable to debug in billing.
+- **Make webhooks idempotent.** Payment providers retry; a payment must be recorded once even if the webhook arrives three times.
+- **Audit sensitive actions** like exports, refunds and admin access, with who and when.
+
+## Key takeaways
+
+- Choose a tenancy model deliberately; shared tables with an `org_id` column are common but need discipline.
+- Take the tenant from the verified session and reload it on every request.
+- Scope every query through shared helpers, and return 404 for out-of-scope records.
+- Back the application checks with composite foreign keys or row-level security.
+- Write tests that try to cross tenants, and make sure removing a check breaks them.
+
+## FAQ
+
+### What is tenant isolation in SaaS?
+
+It's the guarantee that each customer (tenant) can only see and change their own data, even though all customers share the same application and database.
+
+### Should I use a separate database per tenant?
+
+Only if you need the strongest isolation or per-customer data residency. For most SaaS products, shared tables with strict scoping and database constraints are simpler to run and safe enough.
+
+### Is PostgreSQL Row-Level Security enough on its own?
+
+It's a strong safety net, but keep explicit scoping in your application code too. Defense in depth means a bug in one layer doesn't expose data.

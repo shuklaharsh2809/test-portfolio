@@ -1,4 +1,13 @@
-export const SITE_URL = "https://harshshukla.vercel.app";
+/**
+ * The site's public address, used for canonical URLs, the sitemap, RSS and link previews.
+ * NEXT_PUBLIC_SITE_URL overrides it; otherwise Vercel's production domain (custom domain if one is set)
+ * is used automatically, so this never points at the wrong site.
+ */
+export const SITE_URL =
+  process.env.NEXT_PUBLIC_SITE_URL ??
+  (process.env.VERCEL_PROJECT_PRODUCTION_URL
+    ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+    : "http://localhost:3000");
 
 export const profile = {
   name: "Harsh Shukla",

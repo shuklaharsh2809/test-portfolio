@@ -1,5 +1,6 @@
 import { ArrowRight, ArrowUpRight, Briefcase, GraduationCap, Mail, Sparkles } from "lucide-react";
 import Image from "next/image";
+import Link from "next/link";
 import {
   siAndroid,
   siApple,
@@ -32,9 +33,11 @@ import CardGlow from "@/components/CardGlow";
 import CopyEmail from "@/components/CopyEmail";
 import IndiaTime from "@/components/IndiaTime";
 import Nav from "@/components/Nav";
+import PostCard from "@/components/PostCard";
 import PipelineDemo from "@/components/PipelineDemo";
 import Reveal from "@/components/Reveal";
 import TechIcon from "@/components/TechIcon";
+import { getPosts } from "@/lib/blog";
 import { builds, education, experience, links, principles, profile, projects, SITE_URL, skills } from "@/lib/data";
 
 const personStructuredData = {
@@ -153,7 +156,9 @@ function StoreBadge({ label, href }: { label: string; href: string }) {
   );
 }
 
-export default function Home() {
+export default async function Home() {
+  const latestPosts = (await getPosts()).slice(0, 3);
+
   return (
     <>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(personStructuredData) }} />
@@ -523,6 +528,26 @@ export default function Home() {
           </div>
         </section>
 
+        {/* ------------------------------------------------------------- Writing */}
+        {latestPosts.length ? (
+          <section id="writing" className="section" data-reveal>
+            <div className="flex flex-wrap items-end justify-between gap-4">
+              <SectionIntro eyebrow="Writing" title="Latest from the blog">
+                Notes on building and shipping apps.
+              </SectionIntro>
+              <Link href="/blog" className="btn btn-secondary mb-10">
+                All posts
+                <ArrowRight className="size-4" aria-hidden="true" />
+              </Link>
+            </div>
+            <div className="grid gap-4">
+              {latestPosts.map((post) => (
+                <PostCard key={post.slug} post={post} />
+              ))}
+            </div>
+          </section>
+        ) : null}
+
         {/* ------------------------------------------------------------- Contact */}
         <section id="contact" className="section" data-reveal>
           <div className="contact gradient-border">
@@ -560,7 +585,12 @@ export default function Home() {
         <p>
           © {new Date().getFullYear()} {profile.name} · {profile.location}
         </p>
-        <p>Designed &amp; built with Next.js and Tailwind CSS</p>
+        <p className="flex flex-wrap gap-x-4 gap-y-1">
+          <Link href="/blog" className="hover:text-foreground">
+            Blog
+          </Link>
+          <span>Designed &amp; built with Next.js and Tailwind CSS</span>
+        </p>
       </footer>
 
       <CardGlow />

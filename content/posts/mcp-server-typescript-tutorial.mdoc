@@ -1,0 +1,197 @@
+---
+title: 'Model Context Protocol (MCP) Explained: Build Your First MCP Server in TypeScript'
+summary: >-
+  What the Model Context Protocol (MCP) is, how it differs from REST, and how to build an MCP server in TypeScript with tools, resources and prompts.
+publishedAt: 2026-11-22
+draft: false
+tags:
+  - AI
+  - MCP
+  - AI Agents
+  - TypeScript
+---
+The **Model Context Protocol (MCP)** is an open standard that lets AI applications discover and use external capabilities: your database, your task list, your internal APIs. Instead of writing a custom integration for every AI client, you build one MCP server, and any MCP-compatible client (Claude, IDE assistants, agent frameworks) can use it.
+
+To learn it properly, I built [TaskPilot](https://github.com/shuklaharsh2809/mcp-server), a deliberately small task manager whose tasks are available both through a REST API and through an MCP server. This post explains the ideas and walks through the server code.
+
+## MCP vs REST: you probably need both
+
+The most common confusion about MCP is that it replaces REST. It doesn't. They serve different callers:
+
+- **REST** serves conventional clients, like a React UI, that know exactly which endpoint to call.
+- **MCP** serves AI hosts. A model doesn't know your endpoints in advance, so MCP gives it a standard way to **discover** what is available, read descriptions, and **invoke** capabilities with validated input.
+
+In TaskPilot both sit on top of the same service and database layers:
+
+```
+React UI ───────────────→ REST API ──┐
+                                     ├─→ TaskService → TaskRepository → SQLite
+User → LLM → MCP Client → MCP Server ┘
+```
+
+That shared service layer is the key design decision. Business rules live in one place, and MCP is just another way in.
+
+## The three things an MCP server exposes
+
+1. **Tools**: actions the model can call, like `create_task` or `update_task`. Each has a description and an input schema.
+2. **Resources**: read-only data the client can load into context, addressed by URIs like `tasks://pending`.
+3. **Prompts**: reusable prompt templates the user can pick, like "review my tasks".
+
+## Step 1: Create the server
+
+TaskPilot uses the v2 TypeScript SDK packages. (Older tutorials use `@modelcontextprotocol/sdk`; the ideas are the same.)
+
+```ts
+import { McpServer } from "@modelcontextprotocol/server";
+import { serveStdio } from "@modelcontextprotocol/server/stdio";
+import * as z from "zod/v4";
+
+const server = new McpServer({ name: "taskpilot", version: "1.0.0" });
+```
+
+## Step 2: Register a tool
+
+A tool is a name, a description written **for the model**, an input schema, and a handler:
+
+```ts
+server.registerTool(
+  "create_task",
+  {
+    description:
+      "Create a task. Use when the user asks to add, create, schedule, or remember work.",
+    inputSchema: z.object({
+      title: z.string().trim().min(1).max(200),
+      priority: z.enum(["low", "medium", "high"]).optional(),
+      dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    }),
+  },
+  async (input) => {
+    const task = taskService.createTask(input);
+    return {
+      content: [{ type: "text", text: JSON.stringify(task, null, 2) }],
+      structuredContent: task,
+    };
+  },
+);
+```
+
+Two details matter more than they look:
+
+- **The description is a prompt.** "Use when the user asks to add, create, schedule, or remember work" tells the model *when* to call the tool, not just what it does. Vague descriptions lead to tools being called at the wrong time.
+- **The schema is your security boundary.** Model output is untrusted input. Zod rejects anything that doesn't match before your service ever sees it.
+
+For failures, return an error result the model can read and recover from, instead of throwing:
+
+```ts
+return {
+  content: [{ type: "text", text: JSON.stringify({ error: `Task '${id}' was not found.` }) }],
+  isError: true,
+};
+```
+
+## Step 3: Expose read-only data as resources
+
+Resources are perfect for "give the model context" without granting it the power to change anything:
+
+```ts
+server.registerResource(
+  "Pending Tasks",
+  "tasks://pending",
+  { title: "Pending Tasks", description: "Todo and in-progress tasks.", mimeType: "application/json" },
+  async (uri) => ({
+    contents: [
+      {
+        uri: uri.href,
+        mimeType: "application/json",
+        text: JSON.stringify(taskService.listTasks().filter((task) => task.status !== "completed")),
+      },
+    ],
+  }),
+);
+```
+
+## Step 4: Add a prompt template
+
+```ts
+server.registerPrompt(
+  "review_tasks",
+  {
+    title: "Review Task List",
+    description: "Review tasks for overdue work, priorities, duplicates and next actions.",
+    argsSchema: z.object({ focus: z.string().trim().optional() }),
+  },
+  ({ focus }) => ({
+    messages: [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text: `Review these tasks${focus ? `, focusing on ${focus}` : ""}. Do not modify anything unless I ask.\n\n${JSON.stringify(taskService.listTasks(), null, 2)}`,
+        },
+      },
+    ],
+  }),
+);
+```
+
+Note the "do not modify anything unless I ask" line. Prompts are a good place to set the behavior you expect.
+
+## Step 5: Run it over stdio
+
+```ts
+serveStdio(() => server);
+console.error("MCP server is waiting for a client on stdio.");
+```
+
+Log to `stderr`, never `stdout`: over the stdio transport, `stdout` carries the protocol messages, and stray logs there break the connection.
+
+## Testing and connecting a client
+
+Use the MCP Inspector to call your tools by hand before involving a model:
+
+```bash
+npx @modelcontextprotocol/inspector node dist/mcp/server.js
+```
+
+Then register the server with an MCP client. For Claude Desktop, add it to the config file:
+
+```json
+{
+  "mcpServers": {
+    "taskpilot": {
+      "command": "node",
+      "args": ["/absolute/path/to/dist/mcp/server.js"]
+    }
+  }
+}
+```
+
+## Security checklist for MCP servers
+
+- Validate every tool input with a schema; treat model output like user input.
+- Prefer **resources** for reading and keep write tools narrow and explicit.
+- Make destructive tools (delete, send, pay) obvious in their names and descriptions so clients can ask for confirmation.
+- Keep secrets in the server's environment, never in tool results.
+
+## Key takeaways
+
+- MCP standardizes how AI clients discover and call your capabilities; REST still serves your normal app.
+- Put business logic in a shared service layer and expose it through both.
+- Tool descriptions guide the model, schemas protect your system.
+- Use resources for read-only context and prompts for reusable workflows.
+
+The full working example, with a REST API, React UI and an optional agent CLI, is on GitHub: [shuklaharsh2809/mcp-server](https://github.com/shuklaharsh2809/mcp-server).
+
+## FAQ
+
+### Is MCP only for Claude?
+
+No. MCP is an open protocol, and many AI clients, IDEs and agent frameworks support it. A single MCP server works with all of them.
+
+### What's the difference between an MCP tool and a resource?
+
+A tool performs an action and can change state. A resource is read-only data the client can load into the model's context.
+
+### Do I need to rewrite my API to support MCP?
+
+No. Keep your API and add an MCP server that calls the same service layer. That's exactly how TaskPilot is structured.
