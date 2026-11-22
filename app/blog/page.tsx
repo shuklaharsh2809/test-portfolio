@@ -23,8 +23,8 @@ export default async function BlogIndex() {
 
       {posts.length ? (
         <div className="grid gap-4">
-          {posts.map((post) => (
-            <PostCard key={post.slug} post={post} />
+          {posts.map((post, index) => (
+            <PostCard key={post.slug} post={post} headingLevel={2} preloadCover={index === 0} />
           ))}
         </div>
       ) : (

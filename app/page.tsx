@@ -180,7 +180,7 @@ export default async function Home() {
                     alt={`Portrait of ${profile.name}`}
                     width={152}
                     height={152}
-                    priority
+                    preload
                     className="avatar-img"
                   />
                 </span>

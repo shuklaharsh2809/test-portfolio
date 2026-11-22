@@ -1,6 +1,8 @@
 import Markdoc, { type Config, type Node, type RenderableTreeNode, Tag } from "@markdoc/markdoc";
 import React from "react";
+import { publicImageSize } from "@/lib/image-size";
 import CodeBlock from "./CodeBlock";
+import PostImage from "./PostImage";
 
 function slugify(text: string) {
   return text
@@ -43,7 +45,15 @@ const config: Config = {
     image: {
       attributes: { src: { type: String, required: true }, alt: { type: String }, title: { type: String } },
       transform(node) {
-        return new Tag("img", { src: node.attributes.src, alt: node.attributes.alt ?? "", title: node.attributes.title, loading: "lazy" });
+        const src = node.attributes.src as string;
+        const size = publicImageSize(src);
+        return new Tag("PostImage", {
+          src,
+          alt: (node.attributes.alt as string | undefined) ?? "",
+          title: node.attributes.title,
+          width: size?.width,
+          height: size?.height,
+        });
       },
     },
     // Code fences become <CodeBlock>, which syntax-highlights them on the server.
@@ -62,5 +72,5 @@ const config: Config = {
 /** Renders a Keystatic Markdoc document as React. */
 export default function PostBody({ node }: { node: Node }) {
   const content = Markdoc.transform(node, config);
-  return <div className="prose">{Markdoc.renderers.react(content, React, { components: { CodeBlock } })}</div>;
+  return <div className="prose">{Markdoc.renderers.react(content, React, { components: { CodeBlock, PostImage } })}</div>;
 }
