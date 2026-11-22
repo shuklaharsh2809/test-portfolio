@@ -32,7 +32,7 @@ export default function Nav() {
       const target = event.target as Node;
       if (!menuPanel.current?.contains(target) && !menuButton.current?.contains(target)) setMenuOpen(false);
     };
-    const desktop = window.matchMedia("(min-width: 768px)");
+    const desktop = window.matchMedia("(min-width: 1024px)");
     const onResize = () => desktop.matches && setMenuOpen(false);
     document.addEventListener("keydown", onKey);
     document.addEventListener("pointerdown", onPointer);
@@ -72,10 +72,10 @@ export default function Nav() {
           <span className="relative size-8 overflow-hidden rounded-full ring-1 ring-border">
             <Image src="/profile-photo.png" alt="" fill sizes="32px" className="object-cover" />
           </span>
-          <span className="text-sm font-semibold tracking-tight text-foreground">{profile.name}</span>
+          <span className="whitespace-nowrap text-sm font-semibold tracking-tight text-foreground">{profile.name}</span>
         </a>
 
-        <div className="hidden items-center md:flex">
+        <div className="hidden items-center lg:flex">
           {navItems.map((item) => (
             <a
               key={item.id}
@@ -93,14 +93,14 @@ export default function Nav() {
 
         <div className="flex items-center gap-1">
           <ThemeToggle />
-          <a href={links.resume} download="Harsh-Shukla-Resume.pdf" className="nav-cta">
+          <a href={links.resume} download="Harsh-Shukla-Resume.pdf" className="nav-cta" aria-label="Download résumé">
             <ArrowDownToLine className="size-3.5" aria-hidden="true" />
-            Résumé
+            <span className="max-[399px]:hidden">Résumé</span>
           </a>
           <button
             ref={menuButton}
             type="button"
-            className="icon-btn md:hidden"
+            className="icon-btn lg:hidden"
             aria-label={menuOpen ? "Close menu" : "Open menu"}
             aria-expanded={menuOpen}
             aria-controls="mobile-menu"
@@ -111,7 +111,7 @@ export default function Nav() {
         </div>
       </nav>
 
-      <div id="mobile-menu" ref={menuPanel} className="mobile-menu md:hidden" hidden={!menuOpen}>
+      <div id="mobile-menu" ref={menuPanel} className="mobile-menu lg:hidden" hidden={!menuOpen}>
         <ul className="grid gap-0.5">
           {navItems.map((item) => (
             <li key={item.id}>
