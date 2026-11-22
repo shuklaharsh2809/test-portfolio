@@ -39,12 +39,28 @@ export default function BuildShots({
   const videoRef = useRef<HTMLVideoElement>(null);
   const demoActive = Boolean(video) && active === 0;
 
+  // `near` loads the poster once the card is close to the screen; `inView` drives play/pause.
+  const [near, setNear] = useState(false);
+
   useEffect(() => {
     const el = frameRef.current;
     if (!el || !video) return;
     const observer = new IntersectionObserver(([entry]) => setInView(entry.isIntersecting), { threshold: 0.35 });
+    const nearObserver = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setNear(true);
+          nearObserver.disconnect();
+        }
+      },
+      { rootMargin: "800px 0px" },
+    );
     observer.observe(el);
-    return () => observer.disconnect();
+    nearObserver.observe(el);
+    return () => {
+      observer.disconnect();
+      nearObserver.disconnect();
+    };
   }, [video]);
 
   useEffect(() => {
@@ -77,7 +93,7 @@ export default function BuildShots({
               className="browser-shot"
               data-active={demoActive}
               src={video.src}
-              poster={video.poster}
+              poster={near ? video.poster : undefined}
               muted
               loop
               playsInline

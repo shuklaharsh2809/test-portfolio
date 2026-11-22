@@ -84,7 +84,7 @@ export default async function BlogPost({ params }: { params: Promise<{ slug: str
 
       {post.cover ? (
         <div className="post-cover">
-          <Image src={post.cover} alt="" fill priority sizes="(max-width: 768px) 100vw, 768px" className="object-cover" />
+          <Image src={post.cover} alt="" fill preload sizes="(max-width: 768px) 100vw, 768px" className="object-cover" />
         </div>
       ) : null}
 

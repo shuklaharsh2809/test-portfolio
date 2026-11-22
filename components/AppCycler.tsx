@@ -28,7 +28,14 @@ export default function AppCycler({ apps }: { apps: readonly Project[] }) {
       <div className="cycler-stack">
         {apps.map((item, i) => (
           <div key={item.slug} className="cycler-shot" data-active={i === index} aria-hidden={i !== index}>
-            <Image src={item.shots[0]} alt={`${item.name} on the App Store`} fill sizes="200px" className="object-cover object-top" />
+            <Image
+              src={item.shots[0]}
+              alt={`${item.name} on the App Store`}
+              fill
+              sizes="200px"
+              preload={i === 0}
+              className="object-cover object-top"
+            />
           </div>
         ))}
       </div>
@@ -40,7 +47,7 @@ export default function AppCycler({ apps }: { apps: readonly Project[] }) {
             <p className="truncate text-xs text-muted">{app.facts[0]}</p>
           </div>
         </div>
-        <div className="flex gap-1" role="tablist" aria-label="Choose app">
+        <div className="-mr-1.5 flex" role="tablist" aria-label="Choose app">
           {apps.map((item, i) => (
             <button
               key={item.slug}
@@ -50,7 +57,9 @@ export default function AppCycler({ apps }: { apps: readonly Project[] }) {
               aria-label={item.name}
               onClick={() => setIndex(i)}
               className="cycler-dot"
-            />
+            >
+              <span aria-hidden="true" />
+            </button>
           ))}
         </div>
       </div>
