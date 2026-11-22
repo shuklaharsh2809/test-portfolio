@@ -1,39 +1,51 @@
 "use client";
 
 import { Moon, SunMedium } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 
 const STORAGE_KEY = "theme";
+const THEME_EVENT = "themechange";
+
+function subscribe(callback: () => void) {
+  window.addEventListener("storage", callback);
+  window.addEventListener(THEME_EVENT, callback);
+  return () => {
+    window.removeEventListener("storage", callback);
+    window.removeEventListener(THEME_EVENT, callback);
+  };
+}
+
+function getSnapshot() {
+  return document.documentElement.classList.contains("dark");
+}
 
 export default function ThemeToggle() {
-  // Starts `false` on both server and first client render to avoid a
-  // hydration mismatch; the effect then syncs to the real applied theme.
-  const [isDark, setIsDark] = useState(false);
-
-  useEffect(() => {
-    setIsDark(document.documentElement.classList.contains("dark"));
-  }, []);
+  const isDark = useSyncExternalStore(subscribe, getSnapshot, () => true);
 
   function toggle() {
     const next = !isDark;
-    document.documentElement.classList.toggle("dark", next);
-    window.localStorage.setItem(STORAGE_KEY, next ? "dark" : "light");
-    setIsDark(next);
+    const apply = () => {
+      document.documentElement.classList.toggle("dark", next);
+      try {
+        window.localStorage.setItem(STORAGE_KEY, next ? "dark" : "light");
+      } catch {}
+      window.dispatchEvent(new Event(THEME_EVENT));
+    };
+
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (document.startViewTransition && !reduced) document.startViewTransition(apply);
+    else apply();
   }
 
   return (
     <button
       type="button"
       onClick={toggle}
-      className="inline-flex size-9 items-center justify-center rounded-full border border-border bg-background text-muted transition-colors hover:text-foreground"
+      className="icon-btn"
       aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
       aria-pressed={isDark}
     >
-      {isDark ? (
-        <SunMedium className="size-4" />
-      ) : (
-        <Moon className="size-4" />
-      )}
+      {isDark ? <SunMedium className="size-4" aria-hidden="true" /> : <Moon className="size-4" aria-hidden="true" />}
     </button>
   );
 }
