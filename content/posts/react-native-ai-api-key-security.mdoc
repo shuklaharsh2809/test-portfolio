@@ -1,0 +1,146 @@
+---
+title: How to Add AI Features to a React Native App Without Exposing Your API Key
+summary: >-
+  Never ship an AI API key in a mobile app. A secure React Native architecture: server proxy, per-user quotas and validated structured output.
+publishedAt: 2026-11-22
+draft: false
+tags:
+  - React Native
+  - AI
+  - Security
+  - Firebase
+---
+The fastest way to add AI to a React Native app is to call the OpenAI or Anthropic API straight from the app. It's also the fastest way to get a surprise bill. **Anything you ship inside a mobile app can be extracted**, including environment variables baked in at build time. Once someone has your key, they can use it for anything, on your account.
+
+This post covers the architecture I use instead, taken from **Pennywise AI**, a personal-finance app I built with Expo, Firebase and Claude. It has two AI features: turning "I spent ₹450 on lunch today" into a structured expense, and answering questions about your spending.
+
+## The rule: the key never leaves the server
+
+```
+React Native app ──(signed-in user)──▶ Cloud Function ──(API key)──▶ AI provider
+```
+
+The app calls **your** backend. Your backend checks who's calling, holds the key, talks to the AI provider, and returns a cleaned-up result. In Pennywise that backend is a Firebase callable function, but the same shape works with any server or edge function.
+
+## Step 1: Store the key as a secret
+
+With Firebase Functions (v2), secrets live in Secret Manager, not in code or `.env` files committed to git:
+
+```bash
+firebase functions:secrets:set ANTHROPIC_API_KEY
+```
+
+```ts
+import { defineSecret } from "firebase-functions/params";
+
+const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY");
+```
+
+The secret is only injected into the functions that declare it.
+
+## Step 2: Require a signed-in user
+
+```ts
+import { HttpsError, onCall } from "firebase-functions/v2/https";
+
+export const parseExpense = onCall(
+  { secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 60 },
+  async (req) => {
+    if (!req.auth?.uid) {
+      throw new HttpsError("unauthenticated", "Sign in to use AI features.");
+    }
+    // ...
+  },
+);
+```
+
+An unauthenticated endpoint that calls an AI model is just a free API key with extra steps.
+
+## Step 3: Validate the request
+
+Treat the request like any other untrusted input, and bound its size so nobody can send you a novel to process:
+
+```ts
+import { z } from "zod";
+
+const parseExpenseRequestSchema = z.object({
+  text: z.string().trim().min(3).max(300),
+  today: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  currency: z.string().regex(/^[A-Z]{3}$/),
+});
+
+const result = parseExpenseRequestSchema.safeParse(req.data);
+if (!result.success) {
+  throw new HttpsError("invalid-argument", "The request was not in the expected format.");
+}
+```
+
+## Step 4: Rate-limit per user
+
+Even signed-in users can loop a request. Pennywise keeps a **daily quota per user per feature** (for example, 60 expense parses and 40 insight questions a day), counted in Firestore before the AI call is made. When the quota is used up, the function returns a clear "try again tomorrow" error instead of spending money.
+
+Make the limits configurable (Firebase `defineInt` params work well) so you can adjust them without a code change.
+
+## Step 5: Ask for structured output, then validate it again
+
+Free-form text is hard to use in an app. Ask the model for JSON that matches a schema, describing each field so the model knows what you mean:
+
+```ts
+const parsedExpenseSchema = z.object({
+  amount: z.number().nullable().describe("Amount in major units, e.g. 450. null if no amount is stated."),
+  currency: z.string().nullable().describe("ISO 4217 code if the text indicates one, else null."),
+  type: z.enum(["expense", "income"]),
+  categoryId: z.string().nullable().describe("One of the provided category ids, or null."),
+  title: z.string().describe("Short description in Title Case, max 6 words."),
+  confidence: z.enum(["high", "medium", "low"]),
+});
+```
+
+Then **validate the model's output against the same schema**, and sanitize anything that doesn't make sense: an unknown category id becomes `null`, a negative amount is cleared, and so on. In Pennywise the output is validated twice, once on the server and once in the app, and invalid fields are cleared with a warning rather than trusted.
+
+## Step 6: Let the user confirm before anything is saved
+
+The AI produces a **draft**, never a saved record. The user sees every field, fixes anything wrong, and taps Save. This one decision removes most of the risk of AI mistakes: the model suggests, the user decides.
+
+## Calling it from the app
+
+```ts
+import { getFunctions, httpsCallable } from "firebase/functions";
+
+const parseExpense = httpsCallable(getFunctions(app, "asia-south1"), "parseExpense");
+
+const { data } = await parseExpense({ text, today, currency });
+```
+
+If the call fails, fall back gracefully. Pennywise has an offline parser for simple inputs and always offers manual entry.
+
+## Bonus: keep sensitive data away from the model
+
+For spending insights, Pennywise **doesn't send raw transactions to the model at all**. The app computes the numbers itself (totals, category breakdowns, month-over-month changes) and sends only those summaries. The model's job is to explain the facts, not calculate them. Any figure in the answer that doesn't match the computed facts is flagged.
+
+That gives you better privacy and more trustworthy answers, because language models are good at explaining numbers and unreliable at doing arithmetic.
+
+## Production checklist
+
+- API key stored as a server secret, never in the app bundle
+- Every AI endpoint requires authentication
+- Request bodies validated and size-limited
+- Per-user daily quotas
+- Structured output validated on the server (and again in the app)
+- AI results are drafts the user confirms
+- [App Check](https://firebase.google.com/docs/app-check) enabled so only your real app can call the functions
+- A non-AI fallback when the call fails
+
+## FAQ
+
+### Can I hide an API key in React Native with environment variables?
+
+No. Variables like `EXPO_PUBLIC_*` or values from `react-native-config` are compiled into the app bundle and can be extracted. Keep keys on a server.
+
+### Is a Firebase callable function enough on its own?
+
+It's a solid base because it verifies the user automatically. Add input validation, per-user quotas and App Check for production.
+
+### Does this work with OpenAI as well as Claude?
+
+Yes. The architecture is provider-agnostic; only the code that calls the model changes.

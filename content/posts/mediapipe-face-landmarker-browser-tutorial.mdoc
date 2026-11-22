@@ -1,0 +1,148 @@
+---
+title: 'On-Device AI in the Browser: Face Landmark Detection with MediaPipe (No Uploads)'
+summary: >-
+  Run face landmark detection fully in the browser with MediaPipe and WebAssembly. Load the model, reject bad photos, and keep images private.
+publishedAt: 2026-11-22
+draft: false
+tags:
+  - AI
+  - Computer Vision
+  - MediaPipe
+  - Privacy
+---
+Most "AI photo analysis" apps upload your selfie to a server. For something as personal as a face, that's a hard sell. The good news: modern browsers can run real computer-vision models locally, so **the photo never leaves the device.**
+
+I built [GlowCheck](https://glow-check-mu.vercel.app) this way. It detects facial landmarks with **MediaPipe Face Landmarker**, measures proportions and symmetry, and builds a report, all inside the browser tab. This post covers how to set that up in TypeScript and the practical lessons that tutorials usually skip.
+
+## Why run AI on the device?
+
+- **Privacy.** No image upload, no storage, nothing to leak. That's a feature you can put on your landing page.
+- **Cost.** Inference runs on the user's hardware. There's no GPU server bill.
+- **Latency.** No round trip. After the model loads, analysis takes milliseconds to a second.
+
+The trade-off is the first load: the model and the WebAssembly runtime have to download once. We'll handle that with lazy loading and caching.
+
+## Step 1: Install MediaPipe Tasks Vision
+
+```bash
+npm install @mediapipe/tasks-vision
+```
+
+MediaPipe needs two things at runtime: the **WASM runtime files** and the **model file** (`face_landmarker.task`). Pin the WASM URL to the **same version** as your npm package. A mismatch between the JavaScript and WASM versions causes confusing load errors.
+
+## Step 2: Load the model lazily, once
+
+The model is several megabytes, so don't load it on page load. Load it the first time someone actually needs analysis, and cache the promise so it's only created once:
+
+```ts
+import type { FaceLandmarker } from "@mediapipe/tasks-vision";
+
+const WASM_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@<your-version>/wasm";
+const MODEL_URL =
+  "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
+
+let landmarkerPromise: Promise<FaceLandmarker> | null = null;
+
+export function getLandmarker() {
+  if (!landmarkerPromise) {
+    landmarkerPromise = import("@mediapipe/tasks-vision").then(async ({ FaceLandmarker, FilesetResolver }) => {
+      try {
+        const vision = await FilesetResolver.forVisionTasks(WASM_URL);
+        return await FaceLandmarker.createFromOptions(vision, {
+          baseOptions: { modelAssetPath: MODEL_URL, delegate: "CPU" },
+          runningMode: "IMAGE",
+          numFaces: 2,
+          minFaceDetectionConfidence: 0.55,
+          minFacePresenceConfidence: 0.55,
+          outputFaceBlendshapes: true,
+        });
+      } catch (error) {
+        landmarkerPromise = null; // allow a retry after a failed download
+        throw error;
+      }
+    });
+  }
+  return landmarkerPromise;
+}
+```
+
+A few choices worth explaining:
+
+- **Dynamic `import()`** keeps MediaPipe out of your main bundle, so the landing page stays fast.
+- **Resetting the promise on failure** means a flaky connection doesn't permanently break the feature.
+- **`numFaces: 2`**, even though we only want one face. Asking for up to two lets us *detect* group photos and ask for a retake, instead of silently analyzing the wrong person.
+- **`outputFaceBlendshapes: true`** returns expression scores (blink, smile, jaw open), which are useful for quality checks.
+- **`runningMode: "IMAGE"`** is for single photos. For a live camera feed, use `"VIDEO"` and `detectForVideo()`.
+
+## Step 3: Detect landmarks
+
+```ts
+export async function detectFace(image: HTMLImageElement) {
+  const landmarker = await getLandmarker();
+  const result = landmarker.detect(image);
+
+  if (result.faceLandmarks.length === 0) {
+    throw new Error("No clear face found. Try a front-facing photo with even light.");
+  }
+  if (result.faceLandmarks.length > 1) {
+    throw new Error("More than one face found. Choose a photo of one person.");
+  }
+
+  return {
+    landmarks: result.faceLandmarks[0], // 478 points with normalized x, y, z
+    blendshapes: result.faceBlendshapes[0]?.categories ?? [],
+  };
+}
+```
+
+Each landmark has `x` and `y` normalized to 0–1 (multiply by the image's `naturalWidth` and `naturalHeight` to get pixels) and a relative `z` depth.
+
+## Step 4: Reject bad input before you measure
+
+This is where most demo projects fall down. The model *will* return landmarks for a blurry, tilted, eyes-closed photo, and your measurements will be confidently wrong. Check first:
+
+```ts
+const blink = blendshapes
+  .filter((shape) => shape.categoryName.startsWith("eyeBlink"))
+  .reduce((max, shape) => Math.max(max, shape.score), 0);
+
+if (blink > 0.55) {
+  throw new Error("Your eyes look closed. Retake the photo with your eyes open.");
+}
+```
+
+In GlowCheck I also estimate head **yaw and pitch** from the 3D landmarks and ask for a retake when the head is turned more than about 22° or tilted more than about 25°. Clear, specific retake messages do more for perceived accuracy than any amount of model tuning.
+
+## Performance tips
+
+- **Start the download early but don't block on it.** Call `getLandmarker()` when the user opens the camera screen, so the model is ready by the time they take the photo.
+- **Try `delegate: "GPU"`** for live video. It's faster where WebGL is available; keep `"CPU"` as the safe default for single images.
+- **Downscale huge photos** before detection. A 12-megapixel image doesn't produce better landmarks than a 1,000-pixel one, just slower ones.
+- **Self-host the model** for production (an env var like `VITE_MEDIAPIPE_MODEL_URL` makes it easy to switch) so you're not dependent on a third-party URL.
+
+## Make privacy visible
+
+If you do the work to keep data on the device, say so. GlowCheck shows "Captured and analyzed locally" next to the main button, never uploads or stores the photo, and clears everything on reset. Analytics are opt-in and never include the image or measurements.
+
+## Key takeaways
+
+- MediaPipe Face Landmarker runs fully in the browser with WebAssembly: no uploads, no inference server.
+- Lazy-load the model with a dynamic import, cache the promise, and reset it on failure.
+- Ask for two faces so you can reject group photos; use blendshapes and head pose to reject bad photos.
+- Pin the WASM runtime to your package version.
+
+You can try the result at [glow-check-mu.vercel.app](https://glow-check-mu.vercel.app); the source is on [GitHub](https://github.com/shuklaharsh2809/glow-check).
+
+## FAQ
+
+### Does MediaPipe Face Landmarker work on mobile browsers?
+
+Yes. It runs on modern mobile browsers that support WebAssembly. Expect a slower first load on mobile data, so lazy-load the model and show progress.
+
+### How many landmarks does Face Landmarker return?
+
+478 3D landmarks per face, plus optional blendshape scores for expressions like blinking and smiling.
+
+### Is browser-based face detection accurate enough for production?
+
+For landmarks on a clear, front-facing photo, yes. Accuracy problems usually come from bad input (blur, tilt, closed eyes), which is why validating the photo first matters.
