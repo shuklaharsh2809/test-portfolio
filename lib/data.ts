@@ -152,6 +152,8 @@ export type Build = {
   brand: string;
   url?: string;
   repo: string;
+  /** Short muted loop shown as the card's first "Demo" tab. */
+  video?: { src: string; poster: string };
   shots: readonly { src: string; label: string }[];
   description: string;
   points: readonly string[];
@@ -167,6 +169,7 @@ export const builds: readonly Build[] = [
     year: "2026",
     brand: "#0f8a6a",
     repo: "https://github.com/shuklaharsh2809/hostel-care",
+    video: { src: "/work/hostelcare-demo.mp4", poster: "/work/hostelcare-poster.jpg" },
     shots: [
       { src: "/work/hostelcare-shot1.jpg", label: "Dashboard" },
       { src: "/work/hostelcare-shot2.jpg", label: "Students" },
@@ -188,6 +191,7 @@ export const builds: readonly Build[] = [
     brand: "#10b981",
     url: "https://fitgrid-kappa.vercel.app",
     repo: "https://github.com/shuklaharsh2809/gym-management",
+    video: { src: "/work/fitgrid-demo.mp4", poster: "/work/fitgrid-poster.jpg" },
     shots: [
       { src: "/work/fitgrid-shot1.jpg", label: "Dashboard" },
       { src: "/work/fitgrid-shot2.jpg", label: "Members" },
@@ -209,6 +213,7 @@ export const builds: readonly Build[] = [
     brand: "#d97706",
     url: "https://lucknow-gamma.vercel.app",
     repo: "https://github.com/shuklaharsh2809/lucknow",
+    video: { src: "/work/lucknow-demo.mp4", poster: "/work/lucknow-poster.jpg" },
     shots: [
       { src: "/work/lucknow-shot1.jpg", label: "Bara Imambara" },
       { src: "/work/lucknow-shot2.jpg", label: "Night" },
@@ -230,6 +235,7 @@ export const builds: readonly Build[] = [
     brand: "#7a4e6a",
     url: "https://glow-check-mu.vercel.app",
     repo: "https://github.com/shuklaharsh2809/glow-check",
+    video: { src: "/work/glowcheck-demo.mp4", poster: "/work/glowcheck-poster.jpg" },
     shots: [
       { src: "/work/glowcheck-shot1.jpg", label: "Landing" },
       { src: "/work/glowcheck-shot2.jpg", label: "Profile" },
@@ -251,6 +257,7 @@ export const builds: readonly Build[] = [
     brand: "#6d28d9",
     url: "https://naksh-ai.vercel.app",
     repo: "https://github.com/shuklaharsh2809/Naksh-AI",
+    video: { src: "/work/naksh-demo.mp4", poster: "/work/naksh-poster.jpg" },
     shots: [
       { src: "/work/naksh-shot1.jpg", label: "Landing" },
       { src: "/work/naksh-shot2.jpg", label: "Birth details" },
