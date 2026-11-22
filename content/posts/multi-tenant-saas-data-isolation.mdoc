@@ -9,6 +9,7 @@ tags:
   - Architecture
   - PostgreSQL
   - Security
+cover: /blog/multi-tenant-saas-data-isolation/cover.jpg
 ---
 In a multi-tenant SaaS, many customers share one application and one database. That's what makes SaaS affordable to run, and it's also what makes one bug catastrophic: **customer A seeing customer B's data.** No feature is worth that.
 
@@ -33,6 +34,12 @@ Organization (the tenant) → Branch → records (members, rooms, invoices…)
 ```
 
 A **user** is a global identity; their access to an organization comes from a **membership** with a role. Staff can be limited to specific branches. Writing this down early prevents a whole class of "can a branch manager see that?" bugs later.
+
+![FitGrid dashboard for a demo organization, with an organization switcher and an "All branches" filter at the top](/blog/multi-tenant-saas-data-isolation/fitgrid-dashboard.jpg)
+
+In FitGrid, the organization and branch selectors at the top of every screen are the hierarchy made visible: everything below them is scoped to that choice.
+
+![Request flow: a request goes through the session (user, organization, role) to a query scoped by org_id; same-organization records return 200, other organizations return 404](/blog/multi-tenant-saas-data-isolation/tenant-scoping.jpg)
 
 ## 1. Derive the tenant from the session, never from the request
 

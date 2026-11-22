@@ -9,6 +9,7 @@ tags:
   - MCP
   - AI Agents
   - TypeScript
+cover: /blog/mcp-server-typescript-tutorial/cover.jpg
 ---
 The **Model Context Protocol (MCP)** is an open standard that lets AI applications discover and use external capabilities: your database, your task list, your internal APIs. Instead of writing a custom integration for every AI client, you build one MCP server, and any MCP-compatible client (Claude, IDE assistants, agent frameworks) can use it.
 
@@ -23,11 +24,7 @@ The most common confusion about MCP is that it replaces REST. It doesn't. They s
 
 In TaskPilot both sit on top of the same service and database layers:
 
-```
-React UI ───────────────→ REST API ──┐
-                                     ├─→ TaskService → TaskRepository → SQLite
-User → LLM → MCP Client → MCP Server ┘
-```
+![Architecture diagram: a React UI calls the REST API over HTTP, an LLM with an MCP client calls the MCP server over stdio, and both reach the same TaskService and SQLite database](/blog/mcp-server-typescript-tutorial/mcp-architecture.jpg)
 
 That shared service layer is the key design decision. Business rules live in one place, and MCP is just another way in.
 

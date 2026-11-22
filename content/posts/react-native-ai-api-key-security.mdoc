@@ -9,6 +9,7 @@ tags:
   - AI
   - Security
   - Firebase
+cover: /blog/react-native-ai-api-key-security/cover.jpg
 ---
 The fastest way to add AI to a React Native app is to call the OpenAI or Anthropic API straight from the app. It's also the fastest way to get a surprise bill. **Anything you ship inside a mobile app can be extracted**, including environment variables baked in at build time. Once someone has your key, they can use it for anything, on your account.
 
@@ -16,9 +17,7 @@ This post covers the architecture I use instead, taken from **Pennywise AI**, a 
 
 ## The rule: the key never leaves the server
 
-```
-React Native app ──(signed-in user)──▶ Cloud Function ──(API key)──▶ AI provider
-```
+![Secure AI request flow: the React Native app calls a Cloud Function that verifies the user, validates input, checks a daily quota, calls the AI model with a secret key, validates the output and returns a draft the user reviews](/blog/react-native-ai-api-key-security/secure-ai-flow.jpg)
 
 The app calls **your** backend. Your backend checks who's calling, holds the key, talks to the AI provider, and returns a cleaned-up result. In Pennywise that backend is a Firebase callable function, but the same shape works with any server or edge function.
 
