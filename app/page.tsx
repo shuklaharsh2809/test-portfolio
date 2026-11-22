@@ -24,7 +24,9 @@ import {
   type SimpleIcon,
 } from "simple-icons";
 import AppCycler from "@/components/AppCycler";
+import BuildDetails from "@/components/BuildDetails";
 import BuildShots from "@/components/BuildShots";
+import GithubTile from "@/components/GithubTile";
 import { GithubIcon, LinkedinIcon } from "@/components/BrandIcons";
 import CardGlow from "@/components/CardGlow";
 import CopyEmail from "@/components/CopyEmail";
@@ -166,16 +168,30 @@ export default function Home() {
         <section className="bento pt-28 sm:pt-32">
           <div className="tile glow-card intro-tile md:col-span-2 lg:row-span-2">
             <div className="intro relative flex h-full flex-col">
-              <p className="status-pill">
-                <span className="status-dot" aria-hidden="true" />
-                {profile.status}
-              </p>
+              <div className="flex items-center gap-4">
+                <span className="avatar">
+                  <Image
+                    src="/profile-photo.png"
+                    alt={`Portrait of ${profile.name}`}
+                    width={152}
+                    height={152}
+                    priority
+                    className="avatar-img"
+                  />
+                </span>
+                <div className="min-w-0">
+                  <p className="font-semibold tracking-tight text-foreground">{profile.name}</p>
+                  <p className="status-pill mt-1.5">
+                    <span className="status-dot" aria-hidden="true" />
+                    {profile.status}
+                  </p>
+                </div>
+              </div>
               <h1 className="mt-6 text-[2.6rem] font-semibold leading-[1.02] tracking-tighter text-foreground sm:text-6xl">
                 I work on AI-powered mobile apps that <span className="gradient-text">ship.</span>
               </h1>
               <p className="mt-5 max-w-lg text-[17px] leading-7 text-muted">
-                I&apos;m <span className="font-medium text-foreground">{profile.name}</span>, a software engineer
-                working in React Native, React &amp; TypeScript. 2+ years taking products from architecture to the App
+                I&apos;m a software engineer working in React Native, React &amp; TypeScript. 2+ years taking products from architecture to the App
                 Store and Google Play.
               </p>
               <div className="mt-8 flex flex-wrap items-center gap-3 lg:mt-auto lg:pt-8">
@@ -224,12 +240,14 @@ export default function Home() {
             <p className="text-sm text-muted">shipping production web &amp; mobile apps.</p>
           </div>
 
-          <div className="tile glow-card stat-tile md:col-span-2 lg:col-span-1">
+          <div className="tile glow-card stat-tile">
             <p className="tile-label">Local time · Noida, India</p>
             <IndiaTime />
           </div>
 
-          <div className="tile glow-card overflow-hidden md:col-span-2 lg:col-span-3">
+          <GithubTile />
+
+          <div className="tile glow-card overflow-hidden md:col-span-2">
             <p className="tile-label">Daily toolkit</p>
             <div className="-mx-5 mt-4 grid gap-2.5 sm:-mx-6">
               <MarqueeRow items={marqueeTop} />
@@ -341,21 +359,23 @@ export default function Home() {
                   </h3>
                   <p className="mt-3 leading-7 text-foreground/90">{build.description}</p>
 
-                  <ul className="mt-4 space-y-2">
-                    {build.points.map((point) => (
-                      <li key={point} className="check text-[15px]">
-                        {point}
-                      </li>
-                    ))}
-                  </ul>
+                  <BuildDetails>
+                    <ul className="mt-4 space-y-2">
+                      {build.points.map((point) => (
+                        <li key={point} className="check text-[15px]">
+                          {point}
+                        </li>
+                      ))}
+                    </ul>
 
-                  <ul className="mt-5 flex flex-wrap gap-1.5" aria-label={`${build.name} tech stack`}>
-                    {build.stack.map((tech) => (
-                      <li key={tech} className="chip">
-                        {tech}
-                      </li>
-                    ))}
-                  </ul>
+                    <ul className="mt-5 flex flex-wrap gap-1.5" aria-label={`${build.name} tech stack`}>
+                      {build.stack.map((tech) => (
+                        <li key={tech} className="chip">
+                          {tech}
+                        </li>
+                      ))}
+                    </ul>
+                  </BuildDetails>
 
                   <div className="mt-auto flex flex-wrap gap-2 pt-6">
                     {build.url ? (
