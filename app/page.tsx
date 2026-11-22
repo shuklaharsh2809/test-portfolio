@@ -348,6 +348,7 @@ export default function Home() {
                   name={build.name}
                   host={build.url ? new URL(build.url).host : `github.com/shuklaharsh2809`}
                   shots={build.shots}
+                  video={build.video}
                 />
 
                 <div className="flex flex-1 flex-col px-1 pt-5 sm:px-2">
