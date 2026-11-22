@@ -211,7 +211,7 @@
   }
 
   .nav[data-scrolled="true"] {
-    max-width: 46rem;
+    max-width: 50rem;
     background: color-mix(in srgb, var(--tile) 85%, transparent);
   }
 
@@ -484,6 +484,7 @@
     display: inline-flex;
     align-items: center;
     gap: 0.55rem;
+    white-space: nowrap;
     align-self: flex-start;
     border: 1px solid var(--border);
     border-radius: 999px;
@@ -603,11 +604,18 @@
   }
 
   .cycler-dot {
+    position: relative;
     width: 0.45rem;
     height: 0.45rem;
     border-radius: 999px;
     background: var(--border-strong);
     transition: width 400ms var(--ease), background-color 300ms ease;
+  }
+
+  .cycler-dot::after {
+    content: "";
+    position: absolute;
+    inset: -0.85rem -0.3rem;
   }
 
   .cycler-dot[aria-selected="true"] {
@@ -660,7 +668,13 @@
   /* Sections */
 
   .section {
-    padding-block: 5rem;
+    padding-block: 4rem;
+  }
+
+  @media (min-width: 640px) {
+    .section {
+      padding-block: 5rem;
+    }
   }
 
   @media (min-width: 1024px) {
@@ -865,6 +879,19 @@
     .avatar-img {
       width: 4.75rem;
       height: 4.75rem;
+    }
+  }
+
+  /* Smallest phones: keep the photo, name and status badge on their own lines without wrapping */
+  @media (max-width: 359px) {
+    .avatar-img {
+      width: 3.5rem;
+      height: 3.5rem;
+    }
+
+    .intro .status-pill {
+      padding-inline: 0.65rem;
+      font-size: 0.75rem;
     }
   }
 
@@ -1106,6 +1133,32 @@
   .build-link-primary:hover {
     border-color: transparent;
     background: color-mix(in srgb, var(--foreground) 85%, transparent);
+  }
+
+  /* Touch screens: finger-sized controls */
+  @media (pointer: coarse) {
+    .shot-tab {
+      min-height: 2.5rem;
+      padding-inline: 0.85rem;
+      font-size: 0.8125rem;
+    }
+
+    .build-toggle {
+      min-height: 2.5rem;
+    }
+
+    .gh-profile {
+      padding: 0.6rem;
+    }
+
+    .code-copy {
+      min-height: 2.25rem;
+      padding-inline: 0.65rem;
+    }
+
+    .contact-email {
+      padding-block: 0.5rem;
+    }
   }
 
   /* Blog */
@@ -1446,6 +1499,19 @@
     border-radius: 14px;
     background: var(--surface);
     padding: 0.75rem 0.85rem;
+  }
+
+  @media (max-width: 639px) {
+    .pipeline-facts {
+      grid-template-columns: 1fr;
+    }
+
+    .pipeline-facts > div {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 1rem;
+    }
   }
 
   .pipeline-replay {

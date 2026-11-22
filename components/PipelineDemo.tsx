@@ -44,7 +44,7 @@ export default function PipelineDemo() {
       {/* `key` restarts the CSS animations on replay. */}
       <div key={run} className="mt-5 grid gap-6">
         <div>
-          <div className="mb-2 flex items-baseline justify-between text-sm">
+          <div className="mb-2 flex flex-col gap-0.5 text-sm sm:flex-row sm:items-baseline sm:justify-between">
             <span className="font-medium text-foreground">Before · sequential</span>
             <span className="text-muted">each chunk waits for the last</span>
           </div>
@@ -56,7 +56,7 @@ export default function PipelineDemo() {
         </div>
 
         <div>
-          <div className="mb-2 flex items-baseline justify-between text-sm">
+          <div className="mb-2 flex flex-col gap-0.5 text-sm sm:flex-row sm:items-baseline sm:justify-between">
             <span className="font-medium text-foreground">After · concurrent</span>
             <span className="text-accent">chunks processed in parallel</span>
           </div>

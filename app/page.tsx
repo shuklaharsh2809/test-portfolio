@@ -192,7 +192,7 @@ export default async function Home() {
                   </p>
                 </div>
               </div>
-              <h1 className="mt-6 text-[2.6rem] font-semibold leading-[1.02] tracking-tighter text-foreground sm:text-6xl">
+              <h1 className="mt-6 text-[2.6rem] font-semibold leading-[1.02] tracking-tighter text-foreground sm:text-6xl lg:text-5xl xl:text-6xl">
                 I work on AI-powered mobile apps that <span className="gradient-text">ship.</span>
               </h1>
               <p className="mt-5 max-w-lg text-[17px] leading-7 text-muted">

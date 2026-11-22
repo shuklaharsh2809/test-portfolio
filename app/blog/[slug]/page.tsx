@@ -51,7 +51,7 @@ export default async function BlogPost({ params }: { params: Promise<{ slug: str
   return (
     <article className="mx-auto max-w-3xl">
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData) }} />
-      <Link href="/blog" className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-foreground">
+      <Link href="/blog" className="-ml-2 inline-flex items-center gap-1.5 rounded-full px-2 py-2 text-sm text-muted hover:text-foreground">
         <ArrowLeft className="size-4" aria-hidden="true" />
         All posts
       </Link>
