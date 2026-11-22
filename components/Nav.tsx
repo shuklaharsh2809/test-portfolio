@@ -1,10 +1,11 @@
 "use client";
 
-import { ArrowDownToLine } from "lucide-react";
+import { ArrowDownToLine, Menu, X } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { GithubIcon, LinkedinIcon } from "./BrandIcons";
 import { links, navItems, profile } from "@/lib/data";
 import ThemeToggle from "./ThemeToggle";
 
@@ -13,6 +14,35 @@ export default function Nav() {
   const onHome = usePathname() === "/";
   const [scrolled, setScrolled] = useState(false);
   const [active, setActive] = useState("");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuButton = useRef<HTMLButtonElement>(null);
+  const menuPanel = useRef<HTMLDivElement>(null);
+
+  // Mobile menu: focus the first link on open; close on Escape, outside tap, or growing to desktop width.
+  useEffect(() => {
+    if (!menuOpen) return;
+    menuPanel.current?.querySelector<HTMLElement>("a")?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setMenuOpen(false);
+        menuButton.current?.focus();
+      }
+    };
+    const onPointer = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (!menuPanel.current?.contains(target) && !menuButton.current?.contains(target)) setMenuOpen(false);
+    };
+    const desktop = window.matchMedia("(min-width: 768px)");
+    const onResize = () => desktop.matches && setMenuOpen(false);
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onPointer);
+    desktop.addEventListener("change", onResize);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onPointer);
+      desktop.removeEventListener("change", onResize);
+    };
+  }, [menuOpen]);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 24);
@@ -67,8 +97,57 @@ export default function Nav() {
             <ArrowDownToLine className="size-3.5" aria-hidden="true" />
             Résumé
           </a>
+          <button
+            ref={menuButton}
+            type="button"
+            className="icon-btn md:hidden"
+            aria-label={menuOpen ? "Close menu" : "Open menu"}
+            aria-expanded={menuOpen}
+            aria-controls="mobile-menu"
+            onClick={() => setMenuOpen((open) => !open)}
+          >
+            {menuOpen ? <X className="size-5" aria-hidden="true" /> : <Menu className="size-5" aria-hidden="true" />}
+          </button>
         </div>
       </nav>
+
+      <div id="mobile-menu" ref={menuPanel} className="mobile-menu md:hidden" hidden={!menuOpen}>
+        <ul className="grid gap-0.5">
+          {navItems.map((item) => (
+            <li key={item.id}>
+              <a
+                href={onHome ? `#${item.id}` : `/#${item.id}`}
+                className="mobile-menu-link"
+                aria-current={onHome && active === item.id ? "true" : undefined}
+                onClick={() => setMenuOpen(false)}
+              >
+                {item.label}
+              </a>
+            </li>
+          ))}
+          <li>
+            <Link
+              href="/blog"
+              className="mobile-menu-link"
+              aria-current={onHome ? undefined : "true"}
+              onClick={() => setMenuOpen(false)}
+            >
+              Blog
+            </Link>
+          </li>
+        </ul>
+        <div className="mt-2 flex items-center gap-1 border-t border-border pt-2">
+          <a href={links.github} target="_blank" rel="noreferrer" className="icon-btn" aria-label="GitHub">
+            <GithubIcon className="size-4.5" />
+          </a>
+          <a href={links.linkedin} target="_blank" rel="noreferrer" className="icon-btn" aria-label="LinkedIn">
+            <LinkedinIcon className="size-4.5" />
+          </a>
+          <a href={links.email} className="ml-auto pr-3 text-sm text-muted hover:text-foreground">
+            {profile.email}
+          </a>
+        </div>
+      </div>
     </header>
   );
 }

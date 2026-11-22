@@ -17,6 +17,7 @@
     "next": "^16.0.11",
     "react": "19.2.0",
     "react-dom": "19.2.0",
+    "shiki": "^4.6.0",
     "simple-icons": "^16.32.0",
     "tailwind-merge": "^3.4.0"
   },

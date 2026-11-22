@@ -1,5 +1,6 @@
 import Markdoc, { type Config, type Node, type RenderableTreeNode, Tag } from "@markdoc/markdoc";
 import React from "react";
+import CodeBlock from "./CodeBlock";
 
 function slugify(text: string) {
   return text
@@ -45,13 +46,14 @@ const config: Config = {
         return new Tag("img", { src: node.attributes.src, alt: node.attributes.alt ?? "", title: node.attributes.title, loading: "lazy" });
       },
     },
+    // Code fences become <CodeBlock>, which syntax-highlights them on the server.
     fence: {
       attributes: { content: { type: String }, language: { type: String } },
       transform(node) {
-        const language = node.attributes.language as string | undefined;
-        return new Tag("pre", { "data-language": language || undefined }, [
-          new Tag("code", { className: language ? `language-${language}` : undefined }, [node.attributes.content as string]),
-        ]);
+        return new Tag("CodeBlock", {
+          content: node.attributes.content as string,
+          language: (node.attributes.language as string | undefined) || undefined,
+        });
       },
     },
   },
@@ -60,5 +62,5 @@ const config: Config = {
 /** Renders a Keystatic Markdoc document as React. */
 export default function PostBody({ node }: { node: Node }) {
   const content = Markdoc.transform(node, config);
-  return <div className="prose">{Markdoc.renderers.react(content, React)}</div>;
+  return <div className="prose">{Markdoc.renderers.react(content, React, { components: { CodeBlock } })}</div>;
 }
