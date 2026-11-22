@@ -232,6 +232,53 @@
     color: var(--foreground);
   }
 
+  /* Mobile menu: drops down under the nav pill below the md breakpoint */
+  .mobile-menu {
+    position: absolute;
+    top: calc(100% + 0.5rem);
+    left: 1rem;
+    right: 1rem;
+    border: 1px solid var(--border);
+    border-radius: 22px;
+    background: color-mix(in srgb, var(--tile) 92%, transparent);
+    padding: 0.5rem;
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(16px) saturate(1.6);
+    pointer-events: auto;
+    animation: menu-in 220ms var(--ease);
+  }
+
+  .mobile-menu[hidden] {
+    display: none;
+  }
+
+  @keyframes menu-in {
+    from {
+      opacity: 0;
+      transform: translateY(-6px) scale(0.98);
+    }
+  }
+
+  .mobile-menu-link {
+    display: block;
+    border-radius: 14px;
+    padding: 0.75rem 0.9rem;
+    font-size: 1rem;
+    font-weight: 500;
+    color: var(--foreground);
+    transition: background-color 150ms ease;
+  }
+
+  .mobile-menu-link:hover,
+  .mobile-menu-link:focus-visible {
+    background: var(--surface);
+  }
+
+  .mobile-menu-link[aria-current="true"] {
+    background: var(--surface);
+    color: var(--accent);
+  }
+
   .nav-cta {
     display: inline-flex;
     height: 2.25rem;
@@ -1246,28 +1293,75 @@
     color: var(--foreground);
   }
 
-  .prose pre {
-    position: relative;
-    overflow-x: auto;
+  /* Code blocks (highlighted by Shiki at build time) */
+
+  .code-block {
+    overflow: hidden;
     border: 1px solid var(--border);
     border-radius: 14px;
     background: color-mix(in srgb, var(--foreground) 4%, var(--tile));
-    padding: 1.1rem 1.25rem;
+  }
+
+  .code-block-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+    padding: 0.35rem 0.5rem 0.35rem 1rem;
+  }
+
+  .code-block-lang {
     font-family: var(--font-mono);
-    font-size: 0.875rem;
-    line-height: 1.7;
+    font-size: 0.6875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+  }
+
+  .code-copy {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    border-radius: 8px;
+    padding: 0.25rem 0.5rem;
+    font-size: 0.75rem;
+    color: var(--muted);
+    transition: color 200ms ease, background 200ms ease;
+  }
+
+  .code-copy:hover {
+    background: var(--surface);
     color: var(--foreground);
   }
 
-  .prose pre[data-language]::before {
-    content: attr(data-language);
-    position: absolute;
-    top: 0.5rem;
-    right: 0.75rem;
-    font-size: 0.6875rem;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--muted);
+  .code-copy:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  .code-block pre {
+    overflow-x: auto;
+    padding: 1rem 1.25rem 1.1rem;
+    font-family: var(--font-mono);
+    font-size: 0.875rem;
+    line-height: 1.7;
+    tab-size: 2;
+  }
+
+  .code-block pre:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+
+  /* Shiki emits both palettes as CSS variables; pick one per theme. */
+  .code-block .shiki,
+  .code-block .shiki span {
+    color: var(--shiki-light);
+  }
+
+  .dark .code-block .shiki,
+  .dark .code-block .shiki span {
+    color: var(--shiki-dark);
   }
 
   .prose table {
@@ -1588,7 +1682,8 @@
     .marquee-track,
     .aurora::before,
     .aurora::after,
-    .gradient-border {
+    .gradient-border,
+    .mobile-menu {
       animation: none;
     }
   }
