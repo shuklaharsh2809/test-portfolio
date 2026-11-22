@@ -794,6 +794,76 @@
     transform: translateX(20%) translateY(6%) rotate(10deg);
   }
 
+  /* Hero avatar */
+
+  .avatar {
+    position: relative;
+    display: inline-flex;
+    flex-shrink: 0;
+    border-radius: 999px;
+    padding: 2px;
+    background: linear-gradient(135deg, var(--grad-1), var(--grad-2) 50%, var(--grad-3));
+    box-shadow: 0 12px 28px -14px var(--accent);
+  }
+
+  .avatar-img {
+    width: 4rem;
+    height: 4rem;
+    border-radius: 999px;
+    border: 3px solid var(--tile);
+    object-fit: cover;
+  }
+
+  @media (min-width: 640px) {
+    .avatar-img {
+      width: 4.75rem;
+      height: 4.75rem;
+    }
+  }
+
+  /* GitHub tile */
+
+  .gh-profile {
+    display: inline-flex;
+    border-radius: 8px;
+    padding: 0.35rem;
+    color: var(--muted);
+    transition: color 200ms ease, background 200ms ease;
+  }
+
+  .gh-profile:hover {
+    background: var(--surface);
+    color: var(--foreground);
+  }
+
+  .gh-repo {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-inline: -0.5rem;
+    border-radius: 10px;
+    padding: 0.45rem 0.5rem;
+    transition: background 200ms ease;
+  }
+
+  .gh-repo:hover {
+    background: var(--surface);
+  }
+
+  .gh-arrow {
+    color: var(--muted);
+    opacity: 0;
+    transform: translate(-3px, 3px);
+    transition: opacity 200ms ease, transform 300ms var(--ease);
+  }
+
+  .gh-repo:hover .gh-arrow,
+  .gh-repo:focus-visible .gh-arrow {
+    opacity: 1;
+    transform: none;
+  }
+
   /* Builds (personal projects) */
 
   .builds {
@@ -922,6 +992,34 @@
   .shot-tab:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
+  }
+
+  .build-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    align-self: flex-start;
+    margin-top: 0.75rem;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--muted);
+  }
+
+  .build-toggle:hover {
+    color: var(--foreground);
+  }
+
+  /* Phones: details fold away so five cards don't become five full screens */
+  @media (max-width: 639px) {
+    .build-details[data-open="false"] {
+      display: none;
+    }
+  }
+
+  @media (min-width: 640px) {
+    .build-toggle {
+      display: none;
+    }
   }
 
   .build-link {
