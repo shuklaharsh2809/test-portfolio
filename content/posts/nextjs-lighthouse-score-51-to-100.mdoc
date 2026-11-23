@@ -1,0 +1,169 @@
+---
+title: 'How I Took My Next.js Portfolio from a Lighthouse Score of 51 to 100'
+summary: >-
+  My portfolio scored 51 on mobile Lighthouse. The fix wasn't removing design: it was measuring properly and stopping below-the-fold bytes. Code included.
+publishedAt: 2026-11-23
+draft: false
+tags:
+  - Next.js
+  - Performance
+  - Core Web Vitals
+  - Accessibility
+cover: /blog/nextjs-lighthouse-score-51-to-100/cover.jpg
+---
+My portfolio looks fairly heavy: a blurred aurora background, frosted-glass navigation, an app carousel, looping demo videos and a dozen screenshots. When I ran a mobile Lighthouse audit, the homepage scored **51 for performance**, with **2.4 seconds of Total Blocking Time** and a **Largest Contentful Paint (LCP) of 5.5 seconds**.
+
+The obvious move was to start deleting the expensive-looking effects. I didn't, and I'm glad. The real problem was somewhere else entirely, and finding it took measurement, not guesswork. Here's the process, with the code.
+
+## Lesson 1: Never trust a single Lighthouse run
+
+I audited a **production build** (`next build` then `next start`), not the dev server. Dev mode skips optimizations and makes everything look slower than it is.
+
+Then I ran the same audit again. And again. The homepage scored **51, then 100, then 100, then 81**.
+
+Lighthouse's mobile score doesn't time a real slow phone. By default it records a fast page load, then **simulates** how that load would play out on a mid-range phone on slow 4G. Small differences in when requests start can swing the simulated result a lot.
+
+So my rule now: **run at least three times and take the median.** A single score is a sample, not a measurement.
+
+![Lighthouse performance scores before and after: four runs before scored 51, 100, 100 and 81; three runs after scored 100, 100 and 100. Page weight dropped from 796 KB to 399 KB](/blog/nextjs-lighthouse-score-51-to-100/before-after.jpg)
+
+## Lesson 2: Read the trace, not the score
+
+The report had more useful detail than the score itself:
+
+- **JavaScript wasn't the problem.** Script evaluation was about 200 ms in total. My React code wasn't freezing the page.
+- **The LCP element was my name in the navigation bar**, plain text that actually painted about 100 ms into the real (unthrottled) load.
+
+So in the real load, the page showed its main content almost immediately. The 5.5-second LCP only appeared in the **simulation**, which meant something was making the simulated slow-4G load worse.
+
+## Lesson 3: Measure before you delete design
+
+My suspects were the visual effects: a 90px blurred background animating forever, `backdrop-filter` on the nav, glow blurs behind cards, and a rotating gradient border. They *look* expensive.
+
+Instead of deleting them, I measured. I loaded the page with Chrome's CPU slowed down 4× (the same factor Lighthouse uses), and turned off one effect at a time by injecting CSS before the page loaded. To score each variant I added up long-task time over 50 ms, which is how Total Blocking Time works:
+
+```ts
+const cdp = await context.newCDPSession(page);
+await cdp.send("Emulation.setCPUThrottlingRate", { rate: 4 });
+
+await page.addInitScript((css) => {
+  window.__long = [];
+  new PerformanceObserver((list) => {
+    for (const entry of list.getEntries()) window.__long.push(entry.duration);
+  }).observe({ type: "longtask", buffered: true });
+
+  document.addEventListener("DOMContentLoaded", () => {
+    const style = document.createElement("style");
+    style.textContent = css; // e.g. ".aurora { display: none !important }"
+    document.head.appendChild(style);
+  });
+}, variantCss);
+```
+
+**Every variant blocked the main thread for under 5 ms**, including the baseline with every effect on. The blurs and animations were innocent, so the design stayed.
+
+## Lesson 4: The real culprit, bytes you can't see
+
+On slow 4G, bandwidth is the scarce resource. Anything the page downloads early competes with what's on screen.
+
+My homepage has a "Side projects" section far down the page, with five looping demo videos. The videos were fine, since they use `preload="none"` and only play when visible. **The `poster` images were not.** A `<video poster="...">` image downloads as soon as the element exists, whatever `preload` says. That meant five posters, about 395 KB, downloaded at page load for content most visitors wouldn't see for a while.
+
+Two fixes:
+
+**1. Load the poster only when the card gets close to the screen.**
+
+```tsx
+const [near, setNear] = useState(false);
+
+useEffect(() => {
+  const el = frameRef.current;
+  if (!el) return;
+  const observer = new IntersectionObserver(
+    ([entry]) => {
+      if (entry.isIntersecting) {
+        setNear(true);
+        observer.disconnect();
+      }
+    },
+    { rootMargin: "800px 0px" }, // start ~one screen early, so it's ready in time
+  );
+  observer.observe(el);
+  return () => observer.disconnect();
+}, []);
+
+return <video poster={near ? posterUrl : undefined} preload="none" muted loop playsInline />;
+```
+
+**2. Serve the poster at the size it's displayed.** The posters were 1280px wide and shown at about 500px. Resizing them to 800px wide (still sharp on high-density screens) cut them from 395 KB to 177 KB.
+
+Together, the homepage's first load dropped from **796 KB to 399 KB**.
+
+## Lesson 5: Prioritize what's above the fold
+
+The flip side of delaying hidden content is making visible content load first. In Next.js 16, the `priority` prop on `next/image` is deprecated in favor of `preload`:
+
+```tsx
+<Image src={firstScreenshot} alt="OneKey Notes on the App Store" fill sizes="200px" preload />
+```
+
+I added it to the first image in the hero carousel and to the first cover on the blog list, and kept everything else lazy. Use it sparingly: preloading everything is the same as preloading nothing.
+
+## The accessibility fixes that came along
+
+Lighthouse's accessibility audit caught three things worth fixing:
+
+- **Tap targets too small.** My carousel dots were 7px buttons. WCAG 2.2 asks for at least 24×24 px. The fix keeps the small visual dot inside a 24px button:
+
+```css
+.cycler-dot {
+  display: grid;
+  width: 1.5rem;   /* 24px hit area */
+  height: 1.5rem;
+  place-items: center;
+}
+
+.cycler-dot span {
+  width: 0.45rem;  /* the visible dot stays small */
+  height: 0.45rem;
+  border-radius: 999px;
+}
+```
+
+- **Skipped heading levels.** The blog list went from `h1` straight to `h3`. The post cards now take their heading level from where they're used.
+- **Images without dimensions.** Blog images had no `width`/`height`, so the text jumped when they loaded. I now read each image's size from its file header at build time and render it through `next/image`, which also serves responsive sizes in modern formats.
+
+## The results
+
+Production build, Lighthouse mobile profile, median of three runs:
+
+| Page | Performance | Accessibility | Best Practices | SEO |
+| --- | --- | --- | --- | --- |
+| Homepage | **100** (was 51–100) | **100** (was 97) | 100 | 100 |
+| Blog list | 96 | **100** (was 98) | 100 | 100 |
+| Blog post | 96 | 100 | 100 | 100 |
+
+The design didn't change at all. Every blur, glow and animation is still there.
+
+## Checklist
+
+- Audit a production build, never the dev server.
+- Run Lighthouse at least three times and use the median.
+- Read the trace: check what the LCP element is and where main-thread time actually goes.
+- Measure an effect's cost before deleting it.
+- Find bytes that load before they're needed: video posters, below-the-fold images, oversized assets.
+- Preload only what's above the fold.
+- Give every image dimensions, and every tap target at least 24×24 px.
+
+## FAQ
+
+### Why does my Lighthouse score change every time I run it?
+
+The mobile score is simulated from a recorded page load, so small timing differences between runs change the result. Run it several times and use the median, and test a production build.
+
+### Does preload="none" stop a video's poster image from downloading?
+
+No. `preload` controls the video data. The `poster` image downloads as soon as the element renders, so set it only when the video is near the screen.
+
+### Do CSS blur effects hurt Lighthouse performance?
+
+They can, but measure before assuming. In my case, large blurs, backdrop filters and animations added under 5 ms of main-thread blocking. The real cost was bytes downloaded too early.
