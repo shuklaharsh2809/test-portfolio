@@ -20,7 +20,7 @@ function getSnapshot() {
 }
 
 export default function ThemeToggle() {
-  const isDark = useSyncExternalStore(subscribe, getSnapshot, () => true);
+  const isDark = useSyncExternalStore(subscribe, getSnapshot, () => false);
 
   function toggle() {
     const next = !isDark;
