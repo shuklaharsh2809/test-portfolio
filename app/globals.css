@@ -21,7 +21,7 @@
   initial-value: 0deg;
 }
 
-/* Light */
+/* Light (default) */
 :root {
   --background: #f7f7f9;
   --foreground: #0d0d12;
@@ -43,7 +43,7 @@
   color-scheme: light;
 }
 
-/* Dark (default) */
+/* Dark (chosen with the theme toggle) */
 :root.dark {
   --background: #07070a;
   --foreground: #f3f3f6;
