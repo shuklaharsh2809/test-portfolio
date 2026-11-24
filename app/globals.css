@@ -1249,6 +1249,104 @@
     color: #d97706;
   }
 
+  /* Post layout: centred article; on wide screens a sticky table of contents sits beside it */
+
+  .post-article {
+    max-width: 48rem;
+    margin-inline: auto;
+  }
+
+  @media (min-width: 1280px) {
+    .post-layout[data-toc="true"] {
+      display: grid;
+      grid-template-columns: minmax(0, 48rem) 15rem;
+      justify-content: center;
+      gap: 3rem;
+    }
+
+    .post-layout[data-toc="true"] .post-article {
+      margin-inline: 0;
+    }
+  }
+
+  .toc-title {
+    margin-bottom: 0.75rem;
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--muted);
+  }
+
+  .toc-list {
+    display: grid;
+    gap: 0.125rem;
+  }
+
+  .toc-sidebar .toc-list {
+    border-left: 1px solid var(--border);
+  }
+
+  .toc-link {
+    display: block;
+    padding: 0.35rem 0.75rem;
+    font-size: 0.8125rem;
+    line-height: 1.45;
+    color: var(--muted);
+    transition: color 150ms ease;
+  }
+
+  .toc-sidebar .toc-link {
+    margin-left: -1px;
+    border-left: 2px solid transparent;
+  }
+
+  .toc-link:hover {
+    color: var(--foreground);
+  }
+
+  .toc-link[aria-current="location"] {
+    border-left-color: var(--accent);
+    color: var(--foreground);
+  }
+
+  .toc-inline {
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: var(--surface);
+  }
+
+  .toc-inline summary {
+    display: flex;
+    min-height: 3rem;
+    cursor: pointer;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.75rem 1rem;
+    font-size: 0.9375rem;
+    font-weight: 500;
+    color: var(--foreground);
+    list-style: none;
+  }
+
+  .toc-inline summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .toc-inline[open] .toc-chevron {
+    rotate: 180deg;
+  }
+
+  .toc-inline nav {
+    border-top: 1px solid var(--border);
+    padding: 0.5rem 0.25rem 0.75rem;
+  }
+
+  .toc-inline .toc-link {
+    padding-block: 0.55rem;
+    font-size: 0.9375rem;
+  }
+
   /* Article typography */
 
   .prose {
@@ -1265,7 +1363,7 @@
   .prose h2,
   .prose h3,
   .prose h4 {
-    scroll-margin-top: 6rem;
+    /* No scroll-margin here: html's scroll-padding-top already keeps headings clear of the nav. */
     font-weight: 600;
     letter-spacing: -0.03em;
     color: var(--foreground);

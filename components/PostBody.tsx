@@ -1,16 +1,9 @@
 import Markdoc, { type Config, type Node, type RenderableTreeNode, Tag } from "@markdoc/markdoc";
 import React from "react";
 import { publicImageSize } from "@/lib/image-size";
+import { slugify } from "@/lib/slugify";
 import CodeBlock from "./CodeBlock";
 import PostImage from "./PostImage";
-
-function slugify(text: string) {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, "")
-    .trim()
-    .replace(/\s+/g, "-");
-}
 
 function plainText(children: RenderableTreeNode[]): string {
   return children.map((child) => (typeof child === "string" ? child : Tag.isTag(child) ? plainText(child.children) : "")).join("");
