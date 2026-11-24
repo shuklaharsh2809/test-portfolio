@@ -1,0 +1,280 @@
+---
+title: 'React Native In-App Subscriptions with RevenueCat: A Production Guide (2026)'
+summary: >-
+  Add in-app subscriptions to a React Native app with RevenueCat: offerings, paywalls, purchases, restores, entitlements and webhooks, with current SDK code.
+publishedAt: 2026-11-24
+draft: false
+tags:
+  - React Native
+  - RevenueCat
+  - In-App Purchases
+  - Mobile
+cover: /blog/react-native-in-app-subscriptions-revenuecat/cover.jpg
+---
+Subscriptions are the hardest "simple" feature in a mobile app. Apple's StoreKit and Google Play Billing work differently, receipts need validating, renewals happen while your app is closed, and a refund in one store has to remove access everywhere.
+
+**RevenueCat** handles that layer for you: it talks to both stores, validates purchases, and gives your app one answer to the only question that matters, "does this user have access?". At Appeneure, our team shipped RevenueCat subscriptions in **OneKey Notes**, an AI voice-notes app on iOS and Android.
+
+This guide walks through a production setup with the current SDK (`react-native-purchases` 11): products, paywalls, purchases, restores, access checks and server webhooks.
+
+![How RevenueCat subscriptions fit together: App Store and Google Play products are grouped into an offering shown on the paywall, and buying one unlocks the "pro" entitlement; the app checks the entitlement and the server receives webhooks](/blog/react-native-in-app-subscriptions-revenuecat/architecture.jpg)
+
+## The four concepts you need
+
+Get these right in the RevenueCat dashboard first. Everything in the code builds on them.
+
+- **Products**: what you sell in each store, for example `pro_monthly` and `pro_annual` in App Store Connect and Google Play Console.
+- **Entitlement**: the access a purchase unlocks, for example `pro`. Attach every product that unlocks Pro to this one entitlement.
+- **Offering**: the set of products you show on the paywall right now. You can change it from the dashboard without shipping an update.
+- **Package**: a product inside an offering, such as the monthly or annual option.
+
+The rule that saves the most bugs: **your app checks entitlements, never product IDs.** When you later add a weekly plan or a promotional product, nothing in the app needs to change.
+
+## Step 1: Install the SDK
+
+```bash
+npx expo install react-native-purchases react-native-purchases-ui
+```
+
+`react-native-purchases` handles purchases and access. `react-native-purchases-ui` adds ready-made paywalls you design in the RevenueCat dashboard. Both include native code, so to make real purchases with Expo you need a development build, not Expo Go. The current SDK requires React Native 0.80 or newer.
+
+## Step 2: Configure once at startup
+
+```tsx
+import { Platform } from "react-native";
+import Purchases, { LOG_LEVEL } from "react-native-purchases";
+
+export function configurePurchases() {
+  if (__DEV__) Purchases.setLogLevel(LOG_LEVEL.DEBUG);
+
+  Purchases.configure({
+    apiKey: Platform.select({
+      ios: process.env.EXPO_PUBLIC_REVENUECAT_IOS_KEY!,
+      android: process.env.EXPO_PUBLIC_REVENUECAT_ANDROID_KEY!,
+    })!,
+  });
+}
+```
+
+Call it once, as early as possible (for example in your root layout), before any other `Purchases` call.
+
+**About keys:** these are RevenueCat's **public** SDK keys, one per platform. They're designed to ship inside the app, unlike secret API keys, which must stay on your server. (Never put a secret key in a mobile app; I wrote about [why mobile apps can't keep secrets](/blog/react-native-ai-api-key-security).)
+
+## Step 3: Connect purchases to your user accounts
+
+If your app has sign-in, tell RevenueCat who the user is, so their subscription follows them across devices and platforms:
+
+```tsx
+// After sign-in, with your own stable user ID (e.g. your auth provider's uid)
+await Purchases.logIn(user.id);
+
+// On sign-out
+await Purchases.logOut();
+```
+
+Use an ID that never changes, never an email address. Without `logIn`, RevenueCat creates an anonymous ID for the device, which is fine for apps without accounts.
+
+## Step 4: Show the paywall
+
+The fastest route is a RevenueCat Paywall, designed in the dashboard and shown only to users who don't already have access:
+
+```tsx
+import RevenueCatUI, { PAYWALL_RESULT } from "react-native-purchases-ui";
+
+export async function showPaywallIfNeeded(): Promise<boolean> {
+  const result = await RevenueCatUI.presentPaywallIfNeeded({
+    requiredEntitlementIdentifier: "pro",
+  });
+
+  switch (result) {
+    case PAYWALL_RESULT.PURCHASED:
+    case PAYWALL_RESULT.RESTORED:
+    case PAYWALL_RESULT.NOT_PRESENTED: // they already had access
+      return true;
+    default: // CANCELLED or ERROR
+      return false;
+  }
+}
+```
+
+If you want a fully custom paywall instead, fetch the current offering and render its packages yourself:
+
+```tsx
+import Purchases, { type PurchasesPackage } from "react-native-purchases";
+
+export async function getPaywallPackages(): Promise<PurchasesPackage[]> {
+  const offerings = await Purchases.getOfferings();
+  return offerings.current?.availablePackages ?? [];
+}
+
+// In your component: show pkg.product.title and pkg.product.priceString
+```
+
+Always display `priceString` from the store. It's already localized and in the user's currency, so never hard-code prices.
+
+## Step 5: Make the purchase
+
+```tsx
+import Purchases, { type PurchasesError, type PurchasesPackage } from "react-native-purchases";
+
+export async function buy(pkg: PurchasesPackage): Promise<"unlocked" | "cancelled" | "failed"> {
+  try {
+    const { customerInfo } = await Purchases.purchasePackage(pkg);
+    return customerInfo.entitlements.active["pro"] ? "unlocked" : "failed";
+  } catch (e) {
+    const error = e as PurchasesError;
+    if (error.code === Purchases.PURCHASES_ERROR_CODE.PURCHASE_CANCELLED_ERROR) {
+      return "cancelled"; // the user closed the sheet: not an error, show nothing
+    }
+    console.warn("Purchase failed", error.code, error.message);
+    return "failed";
+  }
+}
+```
+
+Two details older tutorials get wrong:
+
+- **Cancelling isn't an error.** Users close the payment sheet all the time; don't show an error message for it. In the current SDK, the `userCancelled` flag is deprecated, so check the error code as above.
+- **Check the entitlement after purchase**, not just "no error thrown". The `customerInfo` returned by the purchase is the source of truth.
+
+## Step 6: Check access everywhere with one hook
+
+Access can change while the app is open: a renewal, a refund, or a purchase on another device. Subscribe to updates instead of checking once:
+
+```tsx
+import { useEffect, useState } from "react";
+import Purchases, { type CustomerInfo } from "react-native-purchases";
+
+export function useProAccess() {
+  const [isPro, setIsPro] = useState<boolean | null>(null); // null = still loading
+
+  useEffect(() => {
+    const update = (info: CustomerInfo) => setIsPro(Boolean(info.entitlements.active["pro"]));
+    Purchases.getCustomerInfo().then(update).catch(() => setIsPro(false));
+    Purchases.addCustomerInfoUpdateListener(update);
+    return () => {
+      Purchases.removeCustomerInfoUpdateListener(update);
+    };
+  }, []);
+
+  return isPro;
+}
+```
+
+Treat `null` as "loading" and don't flash the paywall while it resolves. RevenueCat caches customer info, so this is usually instant after the first launch.
+
+## Step 7: Add a Restore Purchases button
+
+Apple requires a way for users to restore previous purchases, and App Review checks for it. It's one call:
+
+```tsx
+const customerInfo = await Purchases.restorePurchases();
+const restored = Boolean(customerInfo.entitlements.active["pro"]);
+```
+
+Put it on the paywall and in settings, and tell the user clearly whether anything was found.
+
+## Step 8: Keep your backend in sync with webhooks
+
+If your server also needs to know who's subscribed (to unlock server features, send emails, or update your database), use **RevenueCat webhooks**. RevenueCat sends a `POST` with a JSON body like `{ "api_version": "1.0", "event": { ... } }` every time something happens (see the full list of [event types and fields](https://www.revenuecat.com/docs/integrations/webhooks/event-types-and-fields)).
+
+A Next.js route handler that follows RevenueCat's documented rules:
+
+```ts
+// app/api/revenuecat/route.ts
+import { timingSafeEqual } from "node:crypto";
+
+const SECRET = process.env.REVENUECAT_WEBHOOK_AUTH!; // the Authorization value you set in the dashboard
+
+function authorized(header: string | null) {
+  if (!header) return false;
+  const a = Buffer.from(header);
+  const b = Buffer.from(SECRET);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+export async function POST(request: Request) {
+  if (!authorized(request.headers.get("authorization"))) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
+  const { event } = await request.json();
+
+  // RevenueCat retries failed deliveries with the same event id: process each id once.
+  if (await alreadyProcessed(event.id)) return new Response("OK");
+
+  switch (event.type) {
+    case "INITIAL_PURCHASE":
+    case "RENEWAL":
+    case "UNCANCELLATION":
+    case "PRODUCT_CHANGE":
+      await grantPro(event.app_user_id, event.expiration_at_ms);
+      break;
+    case "EXPIRATION":
+      await revokePro(event.app_user_id); // this is when access should end
+      break;
+    case "CANCELLATION":
+      // Usually auto-renew was turned off: access continues until EXPIRATION.
+      // Refunds also arrive here (cancel_reason "CUSTOMER_SUPPORT"): re-check access now.
+      if (event.cancel_reason === "CUSTOMER_SUPPORT") await refreshAccess(event.app_user_id);
+      break;
+    case "BILLING_ISSUE":
+      await notifyPaymentProblem(event.app_user_id); // not expired yet
+      break;
+    default:
+      break; // unknown or new event types: acknowledge and ignore
+  }
+
+  await markProcessed(event.id);
+  return new Response("OK"); // must be a 200, within 60 seconds
+}
+```
+
+The rules behind that code, from [RevenueCat's webhook documentation](https://www.revenuecat.com/docs/integrations/webhooks):
+
+- **Verify the Authorization header** on every request. You set its value in the dashboard; compare it in constant time.
+- **Respond with 200 quickly.** Any other status counts as a failure, and requests that take over 60 seconds are dropped. Do slow work after responding.
+- **Expect duplicates.** Failed deliveries are retried (up to 5 times, over roughly 80 minutes) with the same event `id`, so make your handler idempotent.
+- **Revoke on `EXPIRATION`, not `CANCELLATION`.** A cancellation usually means the user turned off auto-renew; they keep access until the period ends. The exception is a refund (`cancel_reason: "CUSTOMER_SUPPORT"`), so re-check access for those. `BILLING_ISSUE` means a charge failed, not that the subscription has expired.
+- **Accept unknown event types.** RevenueCat adds new ones over time; return 200 and ignore what you don't handle.
+
+For complex cases, RevenueCat's docs suggest treating the webhook as a signal and fetching the subscriber's current state from their API, rather than writing per-event logic.
+
+## Testing before release
+
+- **iOS:** use a Sandbox Apple Account (App Store Connect → Users and Access → Sandbox). Sandbox subscriptions renew on an accelerated schedule, so you can test renewals and expirations in minutes.
+- **Android:** add your account as a license tester in Google Play Console, and test from an internal testing track.
+- **Logs:** keep `LOG_LEVEL.DEBUG` on in development builds; RevenueCat logs exactly why an offering is empty or a purchase failed.
+- **Webhooks:** events include `environment` (`SANDBOX` or `PRODUCTION`). Handle sandbox events separately so test purchases never unlock anything in production data.
+
+The most common launch problem is an **empty offering**: products not yet approved in the store, not attached to the offering, or the in-app purchase agreements not signed. Check those before debugging code.
+
+## Production checklist
+
+- Every product that unlocks access is attached to one entitlement (`pro`).
+- The app checks `entitlements.active`, never product IDs.
+- `Purchases.configure` runs once at startup with the right public key per platform.
+- Signed-in users are identified with `logIn`, using a stable user ID.
+- Cancelled purchases show no error.
+- Restore Purchases is on the paywall and in settings.
+- Prices come from `priceString`, never hard-coded.
+- Webhooks verify the Authorization header, return 200 fast, are idempotent, and revoke on `EXPIRATION`.
+- Sandbox and production events are kept apart.
+
+## FAQ
+
+### Is RevenueCat free?
+
+RevenueCat has a free tier for smaller apps and charges a percentage of revenue above a threshold. Check their current pricing page, since plans change.
+
+### Do I still need my own server for subscriptions?
+
+Not for a basic app. RevenueCat validates purchases and the SDK tells the app who has access. You need a server, plus webhooks, only if your backend must also know about subscriptions.
+
+### Why is my offering empty in development?
+
+Usually the products aren't set up correctly in App Store Connect or Google Play Console, aren't attached to the offering in RevenueCat, or the store's paid-app agreements aren't signed yet. Turn on debug logs to see the exact reason.
+
+### Should I check product IDs or entitlements?
+
+Entitlements. Products change (new plans, promotions, price tests); the entitlement your app checks stays the same.
