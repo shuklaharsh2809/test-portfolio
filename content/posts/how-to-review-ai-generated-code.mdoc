@@ -1,0 +1,169 @@
+---
+title: 'How to Review AI-Generated Code: A Practical Checklist for 2026'
+summary: >-
+  AI coding agents write more code than ever, and review is the new bottleneck. A practical checklist for reviewing AI-generated code safely, with examples.
+publishedAt: 2026-11-24
+draft: false
+tags:
+  - AI
+  - AI Agents
+  - Code Review
+  - Security
+cover: /blog/how-to-review-ai-generated-code/cover.jpg
+---
+AI coding agents are now part of normal development. In Stack Overflow's [2026 Developer Survey](https://stackoverflow.blog/2026/10/06/the-results-of-the-2026-developer-survey-are-here/), **66% of developers use coding assistants or coding agents**. I use them too: my side projects keep an `AGENTS.md` or `CLAUDE.md` file so the agent knows the project's rules.
+
+Writing code got faster. Reviewing it didn't. A [Microsoft study of its own engineers](https://www.techrepublic.com/article/news-ai-coding-agents-microsoft-pull-requests/) found agents raised merged pull requests per engineer by about 24%, but AI-authored pull requests took about 22% longer to merge. The bottleneck has moved from writing code to checking it.
+
+AI-generated code needs a different kind of review. It's usually clean, confident and plausible, which makes its mistakes easy to miss. Here's the checklist I use.
+
+![Before merging AI-written code: keep the change small, verify new dependencies, read the tests first, check security boundaries, then run it yourself](/blog/how-to-review-ai-generated-code/review-flow.jpg)
+
+## Why AI-generated code fails differently
+
+Human mistakes usually look like mistakes: typos, half-finished logic, a confused variable name. AI mistakes look finished. The common ones:
+
+- **Invented or outdated APIs.** The code calls a function that doesn't exist, or one that was deprecated two versions ago.
+- **Invented packages.** The agent imports a library that sounds right but doesn't exist, or exists but isn't the one you think.
+- **Tests that mirror the code.** The agent writes the implementation and tests that check the implementation does what it does, not what it should do.
+- **Missing edge cases.** The happy path works. Empty lists, timeouts, permissions and concurrent requests don't.
+- **Scope creep.** You asked for one fix and got a refactor of three files.
+
+## 1. Keep agent changes small
+
+Large diffs are where review breaks down, for humans and AI alike. Ask the agent for one change at a time, and split anything that touches several concerns into separate pull requests.
+
+A useful rule: if you can't explain a change in one sentence, it's too big to review well. Tell the agent the boundary explicitly ("only change `lib/billing.ts` and its tests") and reject changes outside it.
+
+## 2. Verify every new dependency
+
+This is the most important check, because it's where AI coding becomes a supply-chain risk.
+
+Two real threats:
+
+- **Slopsquatting.** Agents sometimes suggest package names that don't exist. Attackers watch for those names and publish malicious packages under them.
+- **Packages built to be picked by agents.** Security researchers at the Cloud Security Alliance documented [PromptMink](https://labs.cloudsecurityalliance.org/research/csa-research-note-dprk-promptmink-ai-coding-agent-malware-20/), a North Korea-linked campaign that published malicious npm packages designed to be chosen and installed by AI coding agents rather than people.
+
+So any change that touches `package.json` or the lockfile gets checked by hand:
+
+```bash
+# Who publishes it, when was it created, and where does the source live?
+npm view some-package maintainers time.created repository.url
+
+# What exactly changed in dependencies?
+git diff origin/main -- package.json pnpm-lock.yaml
+```
+
+Red flags: a package created very recently, a name one letter off from a popular one, no linked repository, or a dependency the change didn't need.
+
+It also helps to stop dependencies from running code when they're installed. My portfolio uses pnpm, which doesn't run dependencies' install scripts unless you allow them by name:
+
+```yaml
+# pnpm-workspace.yaml: only these packages may run install scripts
+allowBuilds:
+  sharp: true
+  unrs-resolver: true
+```
+
+## 3. Read the tests before the code
+
+Read the tests first and ask: if the feature were broken, would these tests fail?
+
+Watch for tests that:
+
+- assert on mocks instead of results
+- copy the implementation's logic to compute the "expected" value
+- only cover the happy path
+
+A good habit when prompting: ask the agent to write a **failing test first** that describes the behavior, then make it pass. That makes the test a specification, not a mirror.
+
+## 4. Check the security boundaries yourself
+
+Agents are good at features and weak at boundaries. Read every line that touches:
+
+- **Authentication and authorization.** Is the user checked? Is the data scoped to their account? In a multi-tenant app, a missing tenant filter is the worst bug you can ship (I wrote about [keeping each customer's data isolated](/blog/multi-tenant-saas-data-isolation)).
+- **Input validation.** Is untrusted input validated before use? Agents often trust request bodies.
+- **Secrets.** No API keys in client code, logs or test fixtures. On mobile, a key in the app can be extracted (see [how to add AI features to a React Native app without exposing your API key](/blog/react-native-ai-api-key-security)).
+- **Destructive operations.** Deletes, refunds, emails and payments deserve a second look every time.
+
+## 5. Check APIs against the current docs
+
+Models learn from code written before your framework's latest release, so they often reach for older APIs. I've run into this myself:
+
+- In Next.js 16, the `priority` prop on `next/image` is deprecated in favor of `preload`. Agents still write `priority` (I hit this while [taking my portfolio's Lighthouse score from 51 to 100](/blog/nextjs-lighthouse-score-51-to-100)).
+- The MCP TypeScript SDK's newer packages (`@modelcontextprotocol/server`) look different from the older `@modelcontextprotocol/sdk` that most tutorials and models know ([my MCP tutorial](/blog/mcp-server-typescript-tutorial) uses the newer one).
+
+When a change uses an API you don't recognize, open the official docs for the version in your lockfile. Don't ask the same agent whether it's right.
+
+## 6. Run it yourself
+
+"All tests pass" in an agent's summary is a claim, not evidence. Before approving:
+
+- run the tests locally or read the CI result yourself
+- open the preview deployment and use the feature
+- check the screen sizes and states the change affects (empty, loading, error, mobile)
+
+When you ship often, this matters more. I've worked on a production app with a twice-weekly release cycle, where a bad change reaches users fast. Clicking through the change is the cheapest insurance there is.
+
+## 7. Give the agent written rules
+
+Most bad agent changes come from missing context, not bad models. Put your project's rules in a file the agent reads at the start of every session (`AGENTS.md`, `CLAUDE.md` or your tool's equivalent):
+
+```md
+# Rules for coding agents
+
+- Never add a dependency without asking first.
+- Keep changes inside the files named in the task.
+- Write or update tests for every behavior change; run `pnpm test` before finishing.
+- Never log, commit or print secrets. Config comes from environment variables.
+- Use the APIs in the installed versions (check package.json), not older ones.
+```
+
+Short, specific rules work better than long style guides.
+
+## 8. Limit what the agent can reach
+
+Treat an agent like a new contractor with a laptop:
+
+- **No production secrets** in the environment it runs in.
+- **Least-privilege tokens.** If it needs GitHub access, give it a token scoped to one repository.
+- **Review changes to agent config files** like any other code. Security researchers have documented 2026 malware that writes itself into AI coding agents' configuration files to keep a foothold.
+- **Run untrusted work in a sandbox**, such as a container or a cloud sandbox, rather than on your main machine.
+
+## A pull request template for AI-assisted changes
+
+Add this to `.github/pull_request_template.md` so every AI-assisted change gets the same checks:
+
+```md
+### AI-assisted change checklist
+- [ ] Change is small and limited to the stated scope
+- [ ] New dependencies checked by hand (publisher, age, repository) or none added
+- [ ] Tests would fail if the feature broke (read before the code)
+- [ ] Auth, validation, secrets and destructive operations reviewed line by line
+- [ ] Unfamiliar APIs checked against the docs for our installed versions
+- [ ] Ran it myself: tests, preview deployment, affected screens
+```
+
+## Key takeaways
+
+- AI makes code faster to write and slower to review. Plan for review as the bottleneck.
+- Keep agent changes small enough to explain in one sentence.
+- Treat every new dependency as a supply-chain decision, and block install scripts by default.
+- Read the tests first, and check that they would actually catch a bug.
+- Review auth, validation, secrets and destructive operations yourself, every time.
+- Verify unfamiliar APIs against the docs for your installed versions.
+- Write your project's rules down for the agent, and limit what it can reach.
+
+## FAQ
+
+### Should AI-generated code be reviewed differently from human code?
+
+Yes. The standards are the same, but the failure modes differ. AI code tends to look finished while hiding invented APIs, invented packages, shallow tests and missing edge cases, so review should focus on those.
+
+### Can I use an AI tool to review AI-generated code?
+
+As a first pass, yes. AI reviewers catch a lot of routine issues. But they share many of the same blind spots as the agent that wrote the code, so a person should still review dependencies, security boundaries and anything that touches money or user data.
+
+### What is slopsquatting?
+
+Slopsquatting is when attackers publish malicious packages under names that AI models tend to invent. If an agent suggests a package that doesn't exist yet, an attacker can create it, and the next person who trusts the suggestion installs malware.
