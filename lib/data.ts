@@ -1,13 +1,8 @@
 /**
- * The site's public address, used for canonical URLs, the sitemap, RSS and link previews.
- * NEXT_PUBLIC_SITE_URL overrides it; otherwise Vercel's production domain (custom domain if one is set)
- * is used automatically, so this never points at the wrong site.
+ * The site's one official address, used for canonical URLs, the sitemap, RSS and link previews.
+ * Other addresses redirect here (see proxy.ts). NEXT_PUBLIC_SITE_URL can override it, e.g. for a future custom domain.
  */
-export const SITE_URL =
-  process.env.NEXT_PUBLIC_SITE_URL ??
-  (process.env.VERCEL_PROJECT_PRODUCTION_URL
-    ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
-    : "http://localhost:3000");
+export const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://harshshukla-dev.vercel.app";
 
 export const profile = {
   name: "Harsh Shukla",
