@@ -1,6 +1,7 @@
 import "server-only";
 import { createReader } from "@keystatic/core/reader";
 import type { Node } from "@markdoc/markdoc";
+import { slugify } from "./slugify";
 import keystaticConfig from "../keystatic.config";
 
 const reader = createReader(process.cwd(), keystaticConfig);
@@ -71,4 +72,39 @@ export async function getPost(slug: string) {
 export function formatPostDate(iso: string) {
   if (!iso) return "";
   return new Date(`${iso}T00:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+
+export type PostHeading = { id: string; text: string };
+
+/**
+ * The post's h2 headings, with the same ids the renderer gives them (see PostBody),
+ * for the table of contents.
+ */
+export function getHeadings(node: Node): PostHeading[] {
+  const headings: PostHeading[] = [];
+  for (const child of node.walk()) {
+    if (child.type !== "heading" || child.attributes.level !== 2) continue;
+    let text = "";
+    for (const part of child.walk()) {
+      if ((part.type === "text" || part.type === "code") && typeof part.attributes.content === "string") {
+        text += part.attributes.content;
+      }
+    }
+    headings.push({ id: slugify(text), text });
+  }
+  return headings;
+}
+
+/**
+ * Up to `limit` other published posts, ranked by how many tags they share with this one,
+ * newest first on ties, so there are always suggestions even with no tag overlap.
+ */
+export async function getRelatedPosts(slug: string, tags: readonly string[], limit = 2): Promise<PostSummary[]> {
+  const wanted = new Set(tags.map((tag) => tag.toLowerCase()));
+  const candidates = (await getPosts()).filter((post) => post.slug !== slug && !post.draft);
+  return candidates
+    .map((post) => ({ post, shared: post.tags.filter((tag) => wanted.has(tag.toLowerCase())).length }))
+    .sort((a, b) => b.shared - a.shared || b.post.publishedAt.localeCompare(a.post.publishedAt))
+    .slice(0, limit)
+    .map(({ post }) => post);
 }

@@ -4,7 +4,9 @@ import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import PostBody from "@/components/PostBody";
-import { formatPostDate, getPost, getPosts } from "@/lib/blog";
+import PostCard from "@/components/PostCard";
+import TableOfContents from "@/components/TableOfContents";
+import { formatPostDate, getHeadings, getPost, getPosts, getRelatedPosts } from "@/lib/blog";
 import { profile, SITE_URL } from "@/lib/data";
 
 // Posts only change through a deploy (a commit from the editor), so every page is built ahead of time.
@@ -38,6 +40,10 @@ export default async function BlogPost({ params }: { params: Promise<{ slug: str
   const post = await getPost((await params).slug);
   if (!post) notFound();
 
+  const headings = getHeadings(post.node);
+  const showToc = headings.length >= 4;
+  const related = await getRelatedPosts(post.slug, post.tags);
+
   const structuredData = {
     "@context": "https://schema.org",
     "@type": "BlogPosting",
@@ -49,7 +55,8 @@ export default async function BlogPost({ params }: { params: Promise<{ slug: str
   };
 
   return (
-    <article className="mx-auto max-w-3xl">
+    <div className="post-layout" data-toc={showToc}>
+    <article className="post-article">
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData) }} />
       <Link href="/blog" className="-ml-2 inline-flex items-center gap-1.5 rounded-full px-2 py-2 text-sm text-muted hover:text-foreground">
         <ArrowLeft className="size-4" aria-hidden="true" />
@@ -88,9 +95,37 @@ export default async function BlogPost({ params }: { params: Promise<{ slug: str
         </div>
       ) : null}
 
+      {showToc ? (
+        <div className="mt-8 xl:hidden">
+          <TableOfContents headings={headings} variant="inline" />
+        </div>
+      ) : null}
+
       <div className="mt-10">
         <PostBody node={post.node} />
       </div>
+
+      {related.length ? (
+        <section aria-labelledby="keep-reading" className="mt-16 border-t border-border pt-10">
+          <h2 id="keep-reading" className="text-2xl font-semibold tracking-[-0.03em] text-foreground">
+            Keep reading
+          </h2>
+          <div className="mt-6 grid gap-4">
+            {related.map((item) => (
+              <PostCard key={item.slug} post={item} />
+            ))}
+          </div>
+        </section>
+      ) : null}
     </article>
+
+    {showToc ? (
+      <aside className="hidden xl:block">
+        <div className="sticky top-28">
+          <TableOfContents headings={headings} variant="sidebar" />
+        </div>
+      </aside>
+    ) : null}
+    </div>
   );
 }

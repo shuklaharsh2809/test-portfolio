@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import SiteAnalytics from "@/components/SiteAnalytics";
 import { SITE_URL } from "@/lib/data";
 import "./globals.css";
 
@@ -46,7 +47,11 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
-      <body>{children}</body>
+      <body>
+        {children}
+        {/* Only on the live site: Vercel serves the analytics script there (enable Web Analytics in the project). */}
+        {process.env.NEXT_PUBLIC_VERCEL_ENV === "production" ? <SiteAnalytics /> : null}
+      </body>
     </html>
   );
 }
