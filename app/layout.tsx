@@ -29,6 +29,8 @@ export const metadata: Metadata = {
   ],
   openGraph: { type: "profile", url: SITE_URL, siteName: "Harsh Shukla", title, description },
   twitter: { card: "summary_large_image", title, description },
+  // Google Search Console ownership check (renders <meta name="google-site-verification">).
+  verification: { google: "qyGjAQ77U2A7WUzWGiOZz2nXynV_HWWd-alFcPcaYvU" },
 };
 
 export const viewport: Viewport = {
