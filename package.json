@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build --webpack",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "crosspost": "node scripts/crosspost.mjs"
   },
   "dependencies": {
     "@keystatic/core": "^0.6.10",

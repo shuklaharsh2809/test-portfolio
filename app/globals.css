@@ -1816,6 +1816,38 @@
     color: var(--accent);
   }
 
+  .post-cta {
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+    margin-top: 4rem;
+    border-radius: 28px;
+    padding: 2rem 1.5rem;
+    box-shadow: var(--shadow);
+  }
+
+  @media (min-width: 640px) {
+    .post-cta {
+      padding: 2.5rem;
+    }
+  }
+
+  .guide-link {
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    margin-top: 3rem;
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    background: var(--tile);
+    padding: 1rem 1.25rem;
+    transition: border-color 200ms ease;
+  }
+
+  .guide-link:hover {
+    border-color: var(--border-strong);
+  }
+
   /* Motion: the hero rises on load with CSS; sections reveal on scroll once
      JS is ready. Everything stays visible without JS or with reduced motion. */
 
