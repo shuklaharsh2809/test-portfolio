@@ -1,6 +1,9 @@
+import { ArrowRight, BookOpen } from "lucide-react";
 import type { Metadata } from "next";
+import Link from "next/link";
 import PostCard from "@/components/PostCard";
 import { getPosts } from "@/lib/blog";
+import { reactNativeGuide } from "@/lib/guides";
 
 export const metadata: Metadata = {
   title: "Blog — Harsh Shukla",
@@ -20,6 +23,15 @@ export default async function BlogIndex() {
           Notes on building and shipping apps: architecture, performance, and what I learn in production.
         </p>
       </header>
+
+      <Link href={reactNativeGuide.path} className="guide-link mb-6 mt-0">
+        <BookOpen className="size-5 shrink-0 text-accent" aria-hidden="true" />
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm text-muted">Start here · Guide</span>
+          <span className="block font-medium text-foreground">{reactNativeGuide.title}: a practical guide</span>
+        </span>
+        <ArrowRight className="size-4 shrink-0 text-muted" aria-hidden="true" />
+      </Link>
 
       {posts.length ? (
         <div className="grid gap-4">
