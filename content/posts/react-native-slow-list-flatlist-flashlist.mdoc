@@ -1,0 +1,165 @@
+---
+title: 'Fixing Slow React Native Lists: FlatList Tuning and FlashList v2'
+summary: >-
+  Why React Native lists get slow and how to fix them: measure first, tune FlatList (memoization, keys, windowing), and when to switch to FlashList v2.
+publishedAt: 2026-11-25
+draft: false
+tags:
+  - React Native
+  - Performance
+  - FlashList
+  - Mobile
+cover: /blog/react-native-slow-list-flatlist-flashlist/cover.jpg
+---
+Most "my React Native app is slow" complaints are really "my list is slow": blank areas while scrolling fast, janky frames, or a screen that takes seconds to appear because it renders hundreds of rows.
+
+I worked on loading and data-rendering performance for **GoodHuman**, an NDIS workforce app with lists of shifts, clients and notes that real people scroll through all day on all kinds of phones. This guide covers how to find what's actually slow, how to tune `FlatList`, and when to switch to **FlashList v2**.
+
+## Step 0: Measure on a real, slower device
+
+Before changing anything, find out what's slow:
+
+- **Test a release build** on a mid-range Android phone. Development builds are much slower and will mislead you.
+- Turn on the **Perf Monitor** (developer menu) to watch the JS and UI frame rates while you scroll.
+- Use the **React DevTools Profiler** to see which components re-render, and how often.
+
+Measuring before fixing is the same lesson I learned [taking my portfolio's Lighthouse score from 51 to 100](/blog/nextjs-lighthouse-score-51-to-100): the obvious suspect is often innocent. Most slow lists have one of three causes: **rows re-rendering when nothing changed**, **rows that are expensive to render**, or **too much rendered at once**. Each has a different fix, so measure first.
+
+## Fix 1: Stop unnecessary re-renders
+
+This is the most common problem. When the parent re-renders (a timer, a search box, a context update), every visible row can re-render with it.
+
+```tsx
+import { memo, useCallback } from "react";
+import { FlatList, Pressable, Text } from "react-native";
+
+type Shift = { id: string; client: string; startsAt: string };
+
+const ShiftRow = memo(function ShiftRow({ shift, onOpen }: { shift: Shift; onOpen: (id: string) => void }) {
+  return (
+    <Pressable onPress={() => onOpen(shift.id)}>
+      <Text>{shift.client}</Text>
+      <Text>{shift.startsAt}</Text>
+    </Pressable>
+  );
+});
+
+export function ShiftList({ shifts, onOpen }: { shifts: Shift[]; onOpen: (id: string) => void }) {
+  const renderItem = useCallback(
+    ({ item }: { item: Shift }) => <ShiftRow shift={item} onOpen={onOpen} />,
+    [onOpen],
+  );
+
+  return <FlatList data={shifts} renderItem={renderItem} keyExtractor={(item) => item.id} />;
+}
+```
+
+The rules:
+
+- **Wrap rows in `memo`** so they only re-render when their props change.
+- **Keep props stable.** An inline function or object (`style={{...}}`, `onPress={() => ...}` created in the parent) is new on every render and defeats `memo`. Pass stable callbacks (`useCallback`) and the row's ID.
+- **Use a real key.** `keyExtractor` should return a stable ID from your data, never the array index.
+- **Don't recreate the data array** on every render (for example with an unmemoized `.filter()`). Memoize derived lists with `useMemo`.
+
+## Fix 2: Make each row cheaper
+
+A row that does heavy work renders slowly no matter how well you memoize:
+
+- **Format data before it reaches the list.** Date formatting, sorting and string building in every row's render add up. Do it once, when the data arrives.
+- **Size images to how they're displayed.** Loading a 3000-pixel photo into a 48-pixel avatar wastes memory and decoding time. Request thumbnails from your server or CDN.
+- **Flatten deep layouts.** Fewer nested views per row means faster layout.
+
+## Fix 3: Render less at once (FlatList settings)
+
+`FlatList` only renders a window of rows around the screen. These props control that window:
+
+```tsx
+<FlatList
+  data={shifts}
+  renderItem={renderItem}
+  keyExtractor={(item) => item.id}
+  initialNumToRender={10} // rows rendered on first paint: enough to fill the screen
+  maxToRenderPerBatch={10} // rows rendered per batch while scrolling
+  windowSize={7} // how many screens' worth of rows stay rendered
+  getItemLayout={(_, index) => ({ length: ROW_HEIGHT, offset: ROW_HEIGHT * index, index })}
+/>
+```
+
+- **`getItemLayout`** is the biggest win when every row has the same height: the list no longer has to measure rows to know where things are. Only use it if heights really are fixed.
+- **`windowSize`** trades memory for blank areas: a smaller window uses less memory but may show blank space during fast scrolling.
+- **Paginate large data** with `onEndReached` instead of loading thousands of rows up front.
+
+List fixes are ideal to ship in small, frequent releases, so you can measure each change on real users (see [how to ship a React Native app twice a week](/blog/ship-react-native-app-twice-a-week)).
+
+Tune one setting at a time and re-measure; these are trade-offs, not free speed.
+
+## When to switch to FlashList v2
+
+**FlashList** from Shopify recycles row components instead of creating new ones as you scroll, which is usually much smoother for long lists. Version 2 is a big change from v1:
+
+- **No size estimates.** v1 required `estimatedItemSize`; v2 measures items automatically.
+- **New Architecture only.** FlashList v2 is built for React Native's New Architecture and won't run on the old one. If you're still on the old architecture, use v1 or upgrade first.
+- **JavaScript only:** no native dependency to install.
+
+Switching is usually a small change:
+
+```tsx
+import { FlashList } from "@shopify/flash-list";
+
+<FlashList
+  data={items}
+  renderItem={renderItem}
+  keyExtractor={(item) => item.id}
+  getItemType={(item) => item.kind} // e.g. "header" vs "row": recycle like with like
+/>;
+```
+
+If your list mixes very different row types (headers, cards, ads), **`getItemType`** lets FlashList recycle rows only with others of the same type, which keeps recycling efficient.
+
+## The recycling gotcha
+
+Because FlashList **reuses** row components, local state inside a row can leak to the next item that reuses it. For example, an "expanded" toggle stays open on a different shift after you scroll.
+
+FlashList v2 provides `useRecyclingState`, which resets the state when the row is reused for a different item:
+
+```tsx
+import { Pressable, Text } from "react-native";
+import { useRecyclingState } from "@shopify/flash-list";
+
+function ShiftCard({ shift }: { shift: Shift & { notes: string } }) {
+  // Resets to false whenever this component is reused for a different shift.
+  const [expanded, setExpanded] = useRecyclingState(false, [shift.id]);
+  return (
+    <Pressable onPress={() => setExpanded((open) => !open)}>
+      <Text>{shift.client}</Text>
+      {expanded ? <Text>{shift.notes}</Text> : null}
+    </Pressable>
+  );
+}
+```
+
+Better still, keep that kind of state outside the row (for example, a set of expanded IDs in the parent), so it's tied to the data rather than to the component.
+
+## Checklist
+
+- Measured on a release build on a mid-range Android phone.
+- Rows wrapped in `memo`, with stable props and real keys.
+- Derived data memoized; formatting done before rendering.
+- Images sized to their display size.
+- `getItemLayout` for fixed-height rows; pagination for large data.
+- FlashList v2 for long or complex lists (on the New Architecture), with `getItemType` for mixed rows.
+- No item-specific state leaking through recycled rows.
+
+## FAQ
+
+### Is FlashList always faster than FlatList?
+
+For long lists and complex rows it's usually much smoother, because it recycles components. For short, simple lists the difference may not be noticeable; a well-tuned `FlatList` is fine there.
+
+### Does FlashList v2 still need estimatedItemSize?
+
+No. That was required in v1. Version 2 measures items automatically.
+
+### Why does my list show blank areas when scrolling fast?
+
+The list can't render new rows as fast as you scroll. Make rows cheaper to render, avoid unnecessary re-renders, adjust `windowSize`, or switch to FlashList, which handles this better.

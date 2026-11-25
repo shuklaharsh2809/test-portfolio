@@ -1,0 +1,80 @@
+---
+title: "AI Agents Can Build It. Who Makes Sure It's Right?"
+summary: >-
+  AI agents can write most of the code now. What they can't own is deciding what 'right' means, proving it, and answering for it. An engineer's view.
+publishedAt: 2026-11-25
+draft: false
+tags:
+  - AI
+  - AI Agents
+  - Software Engineering
+  - Opinion
+cover: /blog/ai-agents-who-makes-sure-its-right/cover.jpg
+---
+I hear two arguments more and more, usually from smart people:
+
+1. "Why do you need to know what will break? It works."
+2. "We don't need to read the code anymore. Let a team of agents build it."
+
+Both are partly right, and that's why they're worth answering properly. I use coding agents every day, and I'd be lying if I said most code is still hard to type. It isn't. But typing code was never the hard part of shipping software.
+
+## "It works" is a statement about the tests you ran
+
+When someone says "it works", they mean "it worked in the situations I tried". Production is everything you didn't try. Here are three bugs, each from areas I've written about, that work perfectly on the day you ship:
+
+- **Subscriptions.** The code revokes access on `CANCELLATION`. Every test passes. A month later, users who turned off auto-renew lose access they've already paid for. The right event to revoke on is `EXPIRATION` ([details in my RevenueCat guide](/blog/react-native-in-app-subscriptions-revenuecat)).
+- **Multi-tenant SaaS.** One query is missing a tenant filter. Every user sees exactly what they expect, until a customer opens a record ID that belongs to another company ([how to prevent it](/blog/multi-tenant-saas-data-isolation)).
+- **Mobile AI features.** The API key ships inside the app. The feature works flawlessly, right up until someone extracts the key and runs up your bill ([the safer architecture](/blog/react-native-ai-api-key-security)).
+
+None of these show up in a demo. All of them show up in production, found by users, attackers or your finance team. Knowing what breaks isn't pessimism; it's the part of the job that happens before the expensive day instead of after it.
+
+## Agents optimize for the checks you give them
+
+Agents are very good at making things pass. That's exactly the problem: they make *your checks* pass. If nobody knows a refund should remove access, no agent writes a test for it. If nobody thinks about slow phones, no agent profiles one.
+
+I saw this on my own portfolio. It scored 51 on mobile Lighthouse, and the obvious fix (the one any tool would suggest) was to remove the heavy-looking blurs and animations. Measuring showed they cost under 5 ms. The real problem was images downloading for content far down the page ([the full story](/blog/nextjs-lighthouse-score-51-to-100)). The fix needed someone to ask the right question first.
+
+**The quality ceiling of agent-built software is the quality of the spec and the checks.** Writing those is engineering.
+
+## "Don't read the code" is half right
+
+Here's where I agree with the agent-first crowd:
+
+- For prototypes, internal tools and one-off scripts, letting agents run with little review is often the right call.
+- Reading every line isn't the only way to verify software. Good specs, tests that would fail if the feature broke, monitoring and staged rollouts verify outcomes, and that's a legitimate way to work.
+
+What doesn't go away is everything around the code:
+
+- **Someone defines "correct".** Requirements are full of decisions: what happens on a refund, a timeout, a duplicate payment, a user in the wrong place. Agents implement decisions; they don't own them.
+- **Someone verifies it.** Review is now the bottleneck. A [Microsoft study](https://www.techrepublic.com/article/news-ai-coding-agents-microsoft-pull-requests/) found coding agents raised merged pull requests by about 24%, but AI-authored pull requests took about 22% longer to merge. More code, more checking.
+- **Someone is accountable.** When payments fail at 2 a.m. or a client's data leaks, "the agents did it" isn't an answer a client, a regulator or a court accepts.
+- **Agents are attack surface now.** Security researchers documented [PromptMink](https://labs.cloudsecurityalliance.org/research/csa-research-note-dprk-promptmink-ai-coding-agent-malware-20/), a campaign publishing malicious npm packages designed to be picked by AI coding agents. An unsupervised agent team is a door someone else is already trying.
+
+## So what is the job now?
+
+Less typing, more of everything else:
+
+1. **Specify.** Turn a fuzzy request into decisions an agent can implement and a test can check.
+2. **Verify.** Check outcomes, not just that code compiles: tests that would catch the bug, real devices, real data shapes, the current docs for the versions you run. (I keep [a checklist for reviewing AI-generated code](/blog/how-to-review-ai-generated-code).)
+3. **Anticipate.** Know the failure modes of the domain: billing, auth, offline, concurrency, privacy.
+4. **Own it.** Be the person who can explain why it's right, and fix it when it isn't.
+
+That's not a smaller job. It's the part of engineering that was always hardest, with the typing removed.
+
+## The short version
+
+When someone says "Claude can build that", the honest answer is: **yes, it can write the code.** Someone still has to decide what "right" means, prove it's right, and answer for it when it isn't. Engineers who can do that with agents will build more, faster and safer than either agents or engineers alone.
+
+## FAQ
+
+### Will AI agents replace software engineers?
+
+Agents are replacing a lot of code writing. The work that's left (specifying, verifying, owning outcomes) is still engineering, and it gets more valuable as more code is generated.
+
+### Is it safe to ship code you haven't read?
+
+It can be, if something else verifies it: tests that would fail when the behavior is wrong, monitoring, staged rollouts and a human who owns the result. Shipping code nobody has verified in any way is the risk, not skipping line-by-line reading.
+
+### What should developers learn in the age of AI agents?
+
+The things agents depend on you for: understanding requirements, testing strategy, security basics, performance measurement, and the failure modes of the domain you work in.

@@ -1,0 +1,149 @@
+---
+title: 'How to Ship a React Native App Twice a Week Without Breaking Production'
+summary: >-
+  A release process for shipping a React Native app every week: fixed release days, release branches, staged rollouts, OTA updates, flags and rollbacks.
+publishedAt: 2026-11-25
+draft: false
+tags:
+  - React Native
+  - Releases
+  - DevOps
+  - Mobile
+cover: /blog/ship-react-native-app-twice-a-week/cover.jpg
+---
+Shipping a web app often is easy: deploy, and if something breaks, deploy again. Mobile is different. Builds go through store review, users update on their own schedule, and a bad release can live on thousands of phones for weeks.
+
+I've worked in a **twice-weekly (Tuesday and Thursday) release cycle** on **GoodHuman**, a production NDIS workforce app used by thousands of people every day. Releasing that often only works with a process that makes each release small, boring and reversible. This post describes that kind of process: what I'd set up on any React Native team that wants to ship weekly without breaking production.
+
+![A twice-weekly release cycle: merge to main, cut a release branch, run checks and the regression list, submit to the stores, roll out in stages while watching crashes, with feature flags and OTA updates for fast fixes](/blog/ship-react-native-app-twice-a-week/release-cycle.jpg)
+
+## Why shipping more often is safer
+
+It sounds backwards, but frequent releases reduce risk:
+
+- **Smaller releases** contain fewer changes, so a problem is easier to find and fix.
+- **Fixed release days** stop the "let's squeeze one more thing in" pressure that causes most bad releases.
+- **Fresh context:** when a bug appears, the change that caused it was written days ago, not months.
+
+The goal isn't speed for its own sake. It's making each release so small that it's hard to break much.
+
+## 1. Fixed release days and a cutoff
+
+Pick release days and stick to them. With Tuesday and Thursday releases, for example:
+
+- **Cutoff:** the release branch is cut the working day before, at a known time.
+- **Anything not merged and tested by the cutoff waits** for the next release, which is only a few days away. That's what makes the cutoff easy to respect.
+- **Everyone, including the client, knows the schedule,** so nobody has to ask "when will this be live?".
+
+## 2. Cut a release branch
+
+Keep `main` moving, and release from a branch:
+
+```bash
+git checkout main && git pull
+git checkout -b release/2026-11-27
+# bump the version, then push the branch for CI to build
+```
+
+Only fixes for problems found during testing go into the release branch, and each one is merged back to `main` too. New features wait for the next train.
+
+## 3. A short, written regression list
+
+Automated tests catch a lot, but a mobile release still needs a human pass on real devices. Keep a **short written list** of the flows that must never break, and run it on every release:
+
+- Sign in, sign out, password reset
+- The core flows your users rely on (for a workforce app: viewing shifts, checking in and out, submitting notes)
+- Payments or subscriptions, if any
+- Push notifications arriving and opening the right screen
+- One older, slower Android device and the smallest supported iPhone
+
+Fifteen minutes on a written list beats an hour of unstructured clicking. Update the list whenever a bug escapes to production. (If your team uses coding agents, review their changes before the cutoff too; here's [my checklist for reviewing AI-generated code](/blog/how-to-review-ai-generated-code).)
+
+## 4. Roll out in stages
+
+Both stores let you release gradually, so a problem reaches a small share of users first:
+
+- **App Store:** a *phased release* for automatic updates spreads the release over seven days (1%, 2%, 5%, 10%, 20%, 50%, then 100%). You can pause it if something looks wrong.
+- **Google Play:** a *staged rollout* lets you choose the percentage yourself and halt the rollout.
+
+Watch your crash and error reporting during the rollout, especially the first day. If the crash-free rate drops or a new error spikes, pause first and investigate second.
+
+## 5. Over-the-air updates for JavaScript fixes
+
+Many bugs live in JavaScript, not native code. **EAS Update** (with `expo-updates`) can ship a JavaScript fix directly to installed apps, without a store review:
+
+```ts
+import * as Updates from "expo-updates";
+
+export async function applyUpdateIfAvailable() {
+  if (__DEV__) return;
+  const check = await Updates.checkForUpdateAsync();
+  if (check.isAvailable) {
+    await Updates.fetchUpdateAsync();
+    await Updates.reloadAsync(); // reload at a calm moment, e.g. on app start
+  }
+}
+```
+
+Rules that keep OTA updates safe:
+
+- **Only JavaScript and assets.** Anything that changes native code (a new native library, permissions, SDK upgrades) needs a store build. Use a `runtimeVersion` policy so an update is only delivered to builds it's compatible with.
+- **Same quality bar as a store release:** the same checks, and preferably a staged rollout.
+- **Within store rules:** both stores allow updating interpreted code within limits; it's for fixes and improvements, not for changing what the app is.
+
+## 6. Feature flags for anything risky
+
+Merge unfinished or risky work behind a flag, switched off. Then:
+
+- Releases aren't blocked by a feature that isn't ready.
+- A new feature can be turned on for internal users first, then a small share of real users.
+- If something goes wrong, you turn the flag off instead of shipping a new build.
+
+Keep flags short-lived: once a feature is fully live, remove the flag and the old code path.
+
+## 7. Plan the rollback before you need it
+
+A mobile release can't be "rolled back" like a website: users who updated keep the new version. So "rollback" means having these ready:
+
+- **Pause the staged rollout** to stop the damage spreading.
+- **Switch off the feature flag** if the problem is in a flagged feature.
+- **Ship an OTA fix** if it's a JavaScript bug.
+- **Ship a fixed store build,** and if it's serious, request an expedited App Store review.
+- **Server-side protection:** keep APIs backward compatible, because old app versions stay in use for a long time.
+
+Write this down once, so nobody has to invent it under pressure.
+
+## 8. Communicate like it's part of the release
+
+When you work with clients, communication is part of shipping. On every release:
+
+- Send short release notes: what changed, in plain language.
+- Flag anything users will notice, before they notice it.
+- If something does go wrong, say what happened, what you've done, and what's next, quickly and plainly.
+
+Clients forgive bugs far more easily than surprises.
+
+## Checklist
+
+- Fixed release days with a cutoff; missed the cutoff means the next train.
+- Releases come from a release branch; only fixes enter it.
+- A short written regression list, run on real devices every release.
+- Staged rollouts on both stores, with crash monitoring watched on day one.
+- OTA updates for JavaScript-only fixes, guarded by `runtimeVersion`.
+- Feature flags for risky work, removed once a feature is fully live.
+- A written rollback plan, and backward-compatible APIs.
+- Release notes for the client, every time.
+
+## FAQ
+
+### Can you release a mobile app twice a week through the App Store?
+
+Yes. App Store reviews are usually quick, but plan around the occasional delay: submit early, and keep each release small so a delayed review doesn't block anything urgent.
+
+### Do OTA updates replace store releases?
+
+No. They're for JavaScript and asset fixes between store releases. Any native change still needs a new build through the stores.
+
+### What's the most important part of a fast release process?
+
+Small releases. Every other practice (cutoffs, staged rollouts, flags, rollback plans) works better when each release changes less.
