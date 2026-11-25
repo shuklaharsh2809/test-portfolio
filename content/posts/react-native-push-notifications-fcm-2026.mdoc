@@ -1,0 +1,222 @@
+---
+title: 'React Native Push Notifications with Firebase Cloud Messaging (2026 Guide)'
+summary: >-
+  Set up push notifications in React Native with Firebase Cloud Messaging: permissions, tokens, foreground and tap handling, sending, and what's changing in 2026.
+publishedAt: 2026-11-25
+draft: false
+tags:
+  - React Native
+  - Firebase
+  - Push Notifications
+  - Mobile
+cover: /blog/react-native-push-notifications-fcm-2026/cover.jpg
+---
+Push notifications look simple: send a message, it appears on the phone. In production they're one of the most fragile features in a mobile app. Permissions differ by platform and OS version, messages behave differently depending on whether the app is open, tokens go stale, and taps need to open the right screen.
+
+I've worked on push notifications for **GoodHuman**, an NDIS workforce app used by thousands of support workers, where a missed shift notification is a real problem for someone's day. This guide covers a production setup with **React Native Firebase** (`@react-native-firebase/messaging` 27) and **Firebase Cloud Messaging (FCM)**, plus an important change Firebase is making this year.
+
+![Push notification flow: your server sends to FCM, FCM delivers through APNs on iOS or directly on Android, and the app handles the message differently in the foreground, background and when the user taps it](/blog/react-native-push-notifications-fcm-2026/flow.jpg)
+
+## How the pieces fit
+
+- **Your server** decides who to notify and calls FCM.
+- **FCM** delivers to Android devices directly, and to iPhones through Apple's push service (APNs).
+- **Your app** registers the device, asks for permission, and handles messages in three states: **foreground** (app open), **background or quit**, and **opened from a tap**.
+
+Two kinds of FCM messages behave differently:
+
+- **Notification messages** (with a `notification` title and body) are shown by the operating system automatically when the app is in the background. In the foreground, they're delivered to your code and **not shown**, so you decide what to display.
+- **Data messages** (only `data`) are always delivered to your code and never shown automatically.
+
+Most apps send both: a `notification` for display and `data` for routing (which screen to open).
+
+## Step 1: Install
+
+```bash
+npx expo install @react-native-firebase/app @react-native-firebase/messaging expo-notifications
+```
+
+React Native Firebase includes native code, so with Expo you need a development build (plus its config plugin and your `google-services.json` and `GoogleService-Info.plist`). On iOS, push also needs the Push Notifications capability and an APNs key uploaded to your Firebase project.
+
+I use `expo-notifications` alongside FCM for permissions, Android channels and showing foreground notifications. React Native Firebase now marks its own `requestPermission` as deprecated and recommends exactly this.
+
+## Step 2: Ask for permission at the right moment
+
+Android 13 and newer, and every iOS version, require the user to allow notifications. Ask after the user understands why (for example, right after they book their first shift), not on first launch.
+
+```ts
+import * as Notifications from "expo-notifications";
+import { Platform } from "react-native";
+
+export async function enableNotifications(): Promise<boolean> {
+  if (Platform.OS === "android") {
+    // Android shows notifications through channels; create one before asking.
+    await Notifications.setNotificationChannelAsync("default", {
+      name: "General",
+      importance: Notifications.AndroidImportance.HIGH,
+    });
+  }
+
+  const current = await Notifications.getPermissionsAsync();
+  if (current.granted) return true;
+
+  const requested = await Notifications.requestPermissionsAsync();
+  return requested.granted;
+}
+```
+
+If the user declines, respect it: show a quiet "Notifications are off" setting with a link to the system settings, rather than asking again on every launch.
+
+## Step 3: Register the device and save its token
+
+Your server needs an address for each device. With FCM today, that's the **registration token**:
+
+```ts
+import { Platform } from "react-native";
+import { getMessaging, getToken, onTokenRefresh } from "@react-native-firebase/messaging";
+
+const messaging = getMessaging();
+
+export async function registerDevice(userId: string) {
+  const token = await getToken(messaging);
+  await api.savePushToken({ userId, token, platform: Platform.OS });
+
+  // Tokens can change (app reinstall, restore, token rotation): keep the server up to date.
+  return onTokenRefresh(messaging, (newToken) => {
+    api.savePushToken({ userId, token: newToken, platform: Platform.OS });
+  });
+}
+```
+
+These are the **modular** APIs (`getMessaging`, `getToken`). Older tutorials use the `messaging().getToken()` style, which React Native Firebase is moving away from.
+
+Store tokens per **device**, not per user: one person can have a phone and a tablet. On sign-out, delete that device's token on your server so the next user of the device doesn't receive the previous user's notifications.
+
+## Step 4: Handle all three app states
+
+**Background and quit state.** Register the handler as early as possible, outside any component (in your app's entry file), so it's ready when a message wakes the app:
+
+```ts
+// index.ts (entry file)
+import { getMessaging, setBackgroundMessageHandler } from "@react-native-firebase/messaging";
+
+setBackgroundMessageHandler(getMessaging(), async (message) => {
+  // Keep this fast: update local data, badge counts, etc.
+  await syncShiftsQuietly(message.data);
+});
+```
+
+**Foreground.** FCM delivers the message to your code but doesn't display it. Show it yourself if it matters:
+
+```ts
+import * as Notifications from "expo-notifications";
+import { getMessaging, onMessage } from "@react-native-firebase/messaging";
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: false,
+    shouldSetBadge: false,
+  }),
+});
+
+export function listenInForeground() {
+  return onMessage(getMessaging(), async (message) => {
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: message.notification?.title ?? "Update",
+        body: message.notification?.body ?? "",
+        data: message.data ?? {},
+      },
+      trigger: null, // show immediately
+    });
+  });
+}
+```
+
+(In current `expo-notifications`, `shouldShowAlert` is deprecated; use `shouldShowBanner` and `shouldShowList`.)
+
+**Taps.** Users expect a notification to open the right screen, both when the app was in the background and when it was fully closed:
+
+```ts
+import { getMessaging, getInitialNotification, onNotificationOpenedApp } from "@react-native-firebase/messaging";
+
+export function handleTaps(openScreen: (data: Record<string, unknown>) => void) {
+  const messaging = getMessaging();
+
+  // App was closed and opened by the tap
+  getInitialNotification(messaging).then((message) => {
+    if (message?.data) openScreen(message.data);
+  });
+
+  // App was in the background
+  return onNotificationOpenedApp(messaging, (message) => {
+    if (message.data) openScreen(message.data);
+  });
+}
+```
+
+Put a route in `data` (for example `{ "screen": "shift", "id": "123" }`) and validate it before navigating: never navigate to an arbitrary path from a push payload. The screen should still load the record through your normal, permission-checked API, scoped to the signed-in user (the same rule as in [keeping each customer's data isolated](/blog/multi-tenant-saas-data-isolation)).
+
+## Step 5: Send from your server
+
+With the Firebase Admin SDK for Node.js:
+
+```ts
+import { getMessaging } from "firebase-admin/messaging";
+
+export async function notifyShiftChange(token: string, shiftId: string) {
+  try {
+    await getMessaging().send({
+      token,
+      notification: { title: "Shift updated", body: "Your Thursday shift starts at 9:30" },
+      data: { screen: "shift", id: shiftId }, // values must be strings
+      android: { priority: "high" },
+    });
+  } catch (error) {
+    if ((error as { code?: string }).code === "messaging/registration-token-not-registered") {
+      await deletePushToken(token); // the app was uninstalled or the token expired
+    } else {
+      throw error;
+    }
+  }
+}
+```
+
+Cleaning up dead tokens matters: without it, your token table fills with addresses that will never receive anything, and your sends get slower and noisier.
+
+## What's changing in 2026: tokens to Installation IDs
+
+Firebase is moving device registration from **registration tokens** to **Firebase Installation IDs (FIDs)**:
+
+- The [Firebase Android SDK release notes](https://firebase.google.com/support/release-notes/android) list Cloud Messaging 25.1.0 (June 2026) adding FID-based registration and deprecating `getToken`, `deleteToken` and `onNewToken`.
+- React Native Firebase 27 mirrors this: `getToken`, `deleteToken` and `onTokenRefresh` are marked deprecated in favor of `register` and `onRegistered`, which require opting in to Installation ID messaging. The token APIs **keep working** while you haven't opted in.
+- On the server, the Firebase Admin SDK for Node.js (14.5.1, the current version as I write this) still sends with `token`, `topic` or `condition`; it has no Installation ID target yet.
+
+**My recommendation for now:** keep using tokens. They're fully supported, and your server can only send to them today. Plan the migration by storing your push addresses in a generic way (a `pushTarget` value plus a `type`), so switching to Installation IDs later is a data change, not a rewrite. Revisit once your server SDK supports sending to them.
+
+## Production checklist
+
+- Permission is requested in context, not on first launch, and a "no" is respected.
+- An Android notification channel exists before you ask for permission.
+- Tokens are stored per device, refreshed with `onTokenRefresh`, and deleted on sign-out.
+- The background handler is registered in the entry file, outside components.
+- Foreground messages are shown deliberately (or deliberately not).
+- Taps work from both background and closed states, and routes in `data` are validated.
+- The server deletes tokens that return `messaging/registration-token-not-registered`.
+- Test on real devices: iOS simulators have limited push support, and notification behavior differs across Android manufacturers.
+
+## FAQ
+
+### Why don't my notifications show when the app is open?
+
+That's FCM's default behavior: notification messages are only displayed automatically in the background. In the foreground they're delivered to `onMessage`, and you display them yourself.
+
+### Should I use FCM or Expo Push Notifications?
+
+Expo's push service is simpler if your whole app is on Expo and you don't need FCM features. FCM gives you topics, the Firebase ecosystem and direct control. Many teams already on Firebase use FCM directly.
+
+### Are FCM tokens deprecated?
+
+The client SDKs have deprecated the token APIs in favor of Installation ID registration, but token APIs still work, and the Node.js Admin SDK still sends by token. Keep using tokens and design your storage so you can migrate later.

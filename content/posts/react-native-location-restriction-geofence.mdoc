@@ -1,0 +1,191 @@
+---
+title: 'How to Restrict Actions by Location in React Native (Geofenced Check-Ins Done Right)'
+summary: >-
+  Only allow check-ins near a work site: React Native location permissions, accuracy, distance checks, spoofed GPS, and why the server must decide.
+publishedAt: 2026-11-25
+draft: false
+tags:
+  - React Native
+  - Geolocation
+  - Security
+  - Mobile
+cover: /blog/react-native-location-restriction-geofence/cover.jpg
+---
+"Only let workers check in when they're actually at the site" sounds like a two-line feature: get the GPS position, compare it to the site. In production, it's a careful mix of permissions, accuracy, spoofing, battery and trust.
+
+I built geolocation restrictions for **GoodHuman**, an NDIS workforce app used by thousands of support workers, where a check-in proves someone was at a client's home. This post covers how to build location-restricted actions in React Native that are accurate, respectful of privacy, and hard to fake.
+
+![Location-restricted check-in: the app gets a fresh, accurate position and checks the distance for a fast answer; the server re-checks distance, accuracy, freshness and mocked location before accepting](/blog/react-native-location-restriction-geofence/check-flow.jpg)
+
+## The rule: the app suggests, the server decides
+
+The phone is a device the user controls. Its GPS can be spoofed, its clock changed and its requests replayed. So:
+
+- **The app** checks location to give fast, friendly feedback ("You're 400 m from the site").
+- **The server** makes the real decision, with its own checks, and records the evidence.
+
+It's the same principle as keeping API keys off the phone: anything on the device can be changed by its user ([more on that here](/blog/react-native-ai-api-key-security)).
+
+Everything below follows from that.
+
+## Step 1: Ask for the minimum permission
+
+For check-ins, you only need **foreground** location (while the app is open):
+
+```ts
+import * as Location from "expo-location";
+
+export async function ensureLocationPermission(): Promise<boolean> {
+  const { status } = await Location.requestForegroundPermissionsAsync();
+  return status === "granted";
+}
+```
+
+Avoid **background** location unless the feature genuinely needs it (for example, automatic arrival detection). It triggers a stronger permission prompt, extra store review scrutiny, and users are right to be wary of it. Ask at the moment of check-in, and explain why: "We use your location only to confirm you're at the client's address."
+
+## Step 2: Get a fresh, accurate position
+
+The position you use must be **recent** and **precise enough** for your radius. A reading that's 2 km off, or from yesterday, is worse than no reading.
+
+```ts
+import * as Location from "expo-location";
+
+export type Reading = {
+  latitude: number;
+  longitude: number;
+  accuracy: number | null; // metres, radius of uncertainty
+  timestamp: number;
+  mocked?: boolean;
+};
+
+export async function getCheckInReading(): Promise<Reading> {
+  if (!(await Location.hasServicesEnabledAsync())) {
+    throw new Error("Location services are turned off");
+  }
+  const position = await Location.getCurrentPositionAsync({
+    accuracy: Location.Accuracy.High,
+  });
+  return {
+    latitude: position.coords.latitude,
+    longitude: position.coords.longitude,
+    accuracy: position.coords.accuracy,
+    timestamp: position.timestamp,
+    mocked: position.mocked,
+  };
+}
+```
+
+Two details matter here:
+
+- **`accuracy`** is the radius of uncertainty in metres. If it's larger than your allowed radius, you don't actually know whether the user is inside. Ask them to step outside or wait a moment, rather than guessing.
+- **`mocked`** is set by `expo-location` when the position comes from a mock provider on Android, or is simulated by software on iOS (for example a spoofing tool). Send it to the server; don't silently trust or drop it.
+
+## Step 3: Calculate the distance
+
+Use the **haversine formula** for the distance between two coordinates on the Earth. It's accurate enough for site radiuses of tens to hundreds of metres:
+
+```ts
+const EARTH_RADIUS_M = 6_371_000;
+const toRad = (deg: number) => (deg * Math.PI) / 180;
+
+export function distanceInMetres(
+  a: { latitude: number; longitude: number },
+  b: { latitude: number; longitude: number },
+): number {
+  const dLat = toRad(b.latitude - a.latitude);
+  const dLon = toRad(b.longitude - a.longitude);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(a.latitude)) * Math.cos(toRad(b.latitude)) * Math.sin(dLon / 2) ** 2;
+  return 2 * EARTH_RADIUS_M * Math.asin(Math.sqrt(h));
+}
+```
+
+Share this function between the app and the server (a shared package, or the same file copied deliberately) so both make the same calculation.
+
+## Step 4: Give fast feedback in the app
+
+```ts
+export function checkInHint(reading: Reading, site: { latitude: number; longitude: number; radiusM: number }) {
+  const distance = distanceInMetres(reading, site);
+  if (reading.accuracy !== null && reading.accuracy > site.radiusM) {
+    return { ok: false, message: "Your location is too imprecise right now. Try moving outdoors." };
+  }
+  if (distance > site.radiusM) {
+    return { ok: false, message: `You're about ${Math.round(distance)} m from the site.` };
+  }
+  return { ok: true, message: "You're at the site." };
+}
+```
+
+Good copy matters more than it looks. "You're 400 m away" lets someone fix the problem. "Check-in failed" sends them to support.
+
+## Step 5: Let the server make the decision
+
+The server gets the raw reading, never a "yes, I'm inside" flag, and repeats the checks with its own rules:
+
+```ts
+const MAX_READING_AGE_MS = 2 * 60 * 1000; // reading must be under 2 minutes old
+const MAX_ACCURACY_M = 100;
+
+export async function checkIn(user: User, shiftId: string, reading: Reading) {
+  const shift = await getShiftForUser(user, shiftId); // scoped to this user: 404 otherwise
+  const site = shift.site;
+
+  const reasons: string[] = [];
+  if (Date.now() - reading.timestamp > MAX_READING_AGE_MS) reasons.push("stale_reading");
+  if (reading.accuracy === null || reading.accuracy > Math.min(MAX_ACCURACY_M, site.radiusM)) reasons.push("low_accuracy");
+  if (reading.mocked) reasons.push("mocked_location");
+  if (distanceInMetres(reading, site) > site.radiusM) reasons.push("outside_radius");
+
+  await recordCheckInAttempt({ userId: user.id, shiftId, reading, accepted: reasons.length === 0, reasons });
+
+  if (reasons.length) throw new CheckInRejected(reasons);
+  return markCheckedIn(shiftId, user.id);
+}
+```
+
+What this buys you:
+
+- **Server rules can change without an app release.** Tighten the radius or the freshness window centrally.
+- **Every attempt is recorded,** accepted or not. When someone disputes a missed check-in, you have the reading, accuracy and reason.
+- **Spoofing is caught where it can't be turned off.** A modified app can lie about `mocked`, so treat it as a signal, not proof. For higher-stakes cases, add platform integrity checks (Play Integrity on Android, App Attest on iOS) and look for impossible patterns, like the same user checking in at two sites 50 km apart within minutes.
+
+## Choosing the radius
+
+There's no universal number. Consider:
+
+- **Building size and GPS conditions.** Indoors and between tall buildings, readings drift tens of metres.
+- **Where people actually arrive.** Big sites have car parks and multiple entrances; measure from where workers really check in.
+- **Cost of a false rejection.** Turning away someone who is genuinely at work, on a cold morning, costs more trust than an occasional lenient check-in.
+
+Start generous, record every attempt with its distance and accuracy, and tighten per site using real data.
+
+## Privacy and policy
+
+- Collect location **only at the moment of the action**, not continuously.
+- Store what you need as evidence, and set a retention period.
+- Say clearly in the app and your privacy policy what you collect and why. Both app stores review location use, and background location gets the most scrutiny.
+
+## Checklist
+
+- Foreground permission only, requested at the moment of check-in with a clear reason.
+- Fresh, high-accuracy reading; readings less precise than the radius are rejected with helpful copy.
+- `mocked` is sent to the server as a signal.
+- Haversine distance, shared by app and server.
+- The server decides, using the raw reading, and records every attempt with reasons.
+- Radius chosen per site from real data, not a guess.
+
+## FAQ
+
+### How accurate is GPS on a phone?
+
+It varies with conditions: often within several metres outdoors, but tens of metres or worse indoors and near tall buildings. Always use the reported `accuracy` instead of assuming.
+
+### Can users fake their location?
+
+Yes. Mock-location apps and modified devices can. Detect what you can (`mocked`, impossible travel, integrity checks), verify on the server, and keep an audit trail, but don't rely on any single signal.
+
+### Should I use geofencing APIs instead?
+
+Geofencing (`startGeofencingAsync` in `expo-location`) is for detecting arrivals in the background, which needs background location permission. For "allow this action only on site", a one-time foreground check at the moment of the action is simpler and more privacy-friendly.
