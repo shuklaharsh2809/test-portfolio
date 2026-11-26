@@ -1,0 +1,249 @@
+---
+title: 'How to Stream AI Responses in React Native (ChatGPT-Style Typing with expo/fetch)'
+summary: >-
+  Stream AI answers token by token in React Native: a secure server route, expo/fetch streaming, NDJSON parsing, smooth rendering, and a stop button.
+publishedAt: 2026-11-26
+draft: false
+tags:
+  - React Native
+  - AI
+  - OpenAI
+  - Expo
+cover: /blog/react-native-stream-ai-responses/cover.jpg
+---
+An AI answer that takes eight seconds feels broken. The same answer appearing word by word, starting after half a second, feels fast, even though it finishes at the same time. That's why every serious AI app streams its responses.
+
+On the web this is easy. In React Native it has a few traps: the built-in `fetch` waits for the whole response, the API key can't live in the app, and updating state for every token makes the screen stutter. I've worked on AI features in **OneKey Notes**, an AI note-taking app we built at Appeneure, and this guide shows a production setup that handles all three.
+
+![Streaming flow: OpenAI streams events to your server, which checks the user and forwards text as newline-delimited JSON; the app reads it with expo/fetch, splits complete lines, and updates the screen once per frame](/blog/react-native-stream-ai-responses/stream-flow.jpg)
+
+## The architecture
+
+- **The app never talks to OpenAI directly.** Your API key would ship inside the app, where anyone can extract it. The app calls your server, which holds the key ([why, and how to set that up](/blog/react-native-ai-api-key-security)).
+- **Your server streams from OpenAI** and forwards only the text to the app, one small JSON event per line.
+- **The app reads the response as a stream** and appends text as it arrives.
+
+## Step 1: Stream from your server
+
+This route uses the standard `Request` and `Response` APIs, so it works in a Next.js route handler and most modern Node.js frameworks. It uses the OpenAI Node.js SDK (version 7) and the Responses API:
+
+```ts
+import OpenAI from "openai";
+
+const openai = new OpenAI(); // reads OPENAI_API_KEY from the server environment
+const encoder = new TextEncoder();
+
+export async function POST(request: Request) {
+  const user = await requireUser(request); // your auth: reject anonymous requests
+  const { prompt } = await request.json();
+  if (typeof prompt !== "string" || !prompt.trim() || prompt.length > 4000) {
+    return new Response("Invalid prompt", { status: 400 });
+  }
+  await checkRateLimit(user.id); // AI calls cost money: limit them per user
+
+  const stream = await openai.responses.create({
+    model: process.env.OPENAI_MODEL!, // keep the model in config, not code
+    input: prompt,
+    stream: true,
+  });
+
+  let cancelled = false;
+  const body = new ReadableStream({
+    async start(controller) {
+      const send = (event: object) => {
+        if (!cancelled) controller.enqueue(encoder.encode(JSON.stringify(event) + "\n"));
+      };
+      try {
+        for await (const event of stream) {
+          if (event.type === "response.output_text.delta") send({ type: "delta", text: event.delta });
+          if (event.type === "error" || event.type === "response.failed") {
+            send({ type: "error", message: "The AI service failed. Please try again." });
+            return; // `finally` still closes the stream
+          }
+        }
+        send({ type: "done" });
+      } catch {
+        send({ type: "error", message: "The answer was interrupted. Please try again." });
+      } finally {
+        if (!cancelled) controller.close();
+      }
+    },
+    cancel() {
+      // The app disconnected (user pressed stop or left the screen): stop generating, stop paying.
+      cancelled = true;
+      stream.controller.abort();
+    },
+  });
+
+  return new Response(body, {
+    headers: { "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-store" },
+  });
+}
+```
+
+Why **newline-delimited JSON** (one JSON object per line) instead of plain text? Because you'll want more than text: a "done" signal, a clean error message, and later maybe a message ID or usage data. Each line is one complete event, and it's simple to parse.
+
+Notice what the server does *not* forward: raw OpenAI events and error details. The app gets only what it needs, and internal errors stay in your logs.
+
+## Step 2: Read the stream in the app with expo/fetch
+
+Here's the trap: React Native's original `fetch` implementation doesn't support streaming response bodies. It waits for the whole response, so your "streaming" answer appears all at once at the end.
+
+Expo's `fetch` (from `expo/fetch`) supports streaming. In current Expo SDKs it's installed as the global `fetch`, but importing it explicitly makes the dependency obvious and works on older SDKs too:
+
+```ts
+import { fetch } from "expo/fetch";
+
+export type StreamEvent =
+  | { type: "delta"; text: string }
+  | { type: "done" }
+  | { type: "error"; message: string };
+
+export async function streamAnswer(
+  prompt: string,
+  authToken: string,
+  onEvent: (event: StreamEvent) => void,
+  signal: AbortSignal,
+) {
+  const response = await fetch(`${API_URL}/api/answer`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${authToken}` },
+    body: JSON.stringify({ prompt }),
+    signal,
+  });
+  if (!response.ok || !response.body) throw new Error(`Request failed (${response.status})`);
+
+  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += value;
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? ""; // the last piece may be an incomplete line: keep it for the next chunk
+    for (const line of lines) {
+      if (line.trim()) onEvent(JSON.parse(line) as StreamEvent);
+    }
+  }
+}
+```
+
+The buffering is the important part. Network chunks don't line up with your events: one chunk can hold three events, or half of one. Only parse **complete** lines, and carry the rest over.
+
+## Step 3: Render smoothly
+
+A fast model can send dozens of small deltas per second. Calling `setState` for each one re-renders the screen just as often, and on a mid-range Android phone that shows up as stutter (the same re-render problem that [slows down long lists](/blog/react-native-slow-list-flatlist-flashlist)).
+
+Instead, collect deltas in a ref and update the state at most once per frame:
+
+```tsx
+import { useCallback, useEffect, useRef, useState } from "react";
+
+type Status = "idle" | "streaming" | "done" | "stopped" | "error";
+
+export function useStreamingAnswer(getAuthToken: () => Promise<string>) {
+  const [text, setText] = useState("");
+  const [status, setStatus] = useState<Status>("idle");
+  const pending = useRef("");
+  const frame = useRef<number | null>(null);
+  const abort = useRef<AbortController | null>(null);
+
+  const flush = useCallback(() => {
+    frame.current = null;
+    const chunk = pending.current;
+    pending.current = "";
+    setText((current) => current + chunk);
+  }, []);
+
+  const ask = useCallback(
+    async (prompt: string) => {
+      abort.current?.abort(); // only one answer at a time
+      const controller = new AbortController();
+      abort.current = controller;
+      setText("");
+      setStatus("streaming");
+      try {
+        await streamAnswer(
+          prompt,
+          await getAuthToken(),
+          (event) => {
+            if (abort.current !== controller) return; // a newer question replaced this one
+            if (event.type === "delta") {
+              pending.current += event.text;
+              frame.current ??= requestAnimationFrame(flush);
+            } else {
+              setStatus(event.type === "done" ? "done" : "error");
+            }
+          },
+          controller.signal,
+        );
+      } catch {
+        if (abort.current === controller) setStatus(controller.signal.aborted ? "stopped" : "error");
+      }
+    },
+    [flush, getAuthToken],
+  );
+
+  const stop = useCallback(() => abort.current?.abort(), []);
+
+  // Leaving the screen cancels the request, which also stops generation on the server.
+  useEffect(
+    () => () => {
+      abort.current?.abort();
+      if (frame.current !== null) cancelAnimationFrame(frame.current);
+    },
+    [],
+  );
+
+  return { text, status, ask, stop };
+}
+```
+
+At 60 frames per second that's still very smooth typing, with a fraction of the renders.
+
+## Step 4: The details users notice
+
+- **A stop button.** Users often see the answer they need halfway through. Aborting the request also triggers `cancel()` on the server, so you stop paying for tokens nobody reads.
+- **Keep partial text on errors.** If the connection drops mid-answer, show what arrived, plus "Answer interrupted. Retry?", instead of wiping the screen.
+- **Tolerant Markdown.** Models write Markdown, and mid-stream it's often incomplete (an unclosed code block or a half-written list). Use a renderer that handles partial input without flickering, or render plain text until the answer is done.
+- **Scroll politely.** Follow the new text only while the user is at the bottom. If they scroll up to reread, don't pull them back down.
+- **Show progress before the first token.** A typing indicator for the first half-second means the screen never looks frozen.
+
+## Production gotchas
+
+- **Buffering proxies.** A reverse proxy or CDN in front of your server may buffer the whole response, which undoes the streaming. If it works locally but not in production, check your proxy's buffering settings (for nginx, the `X-Accel-Buffering: no` response header turns it off per response).
+- **Timeouts.** Long answers can run for a while. Make sure your server platform's function timeout is longer than your longest expected answer.
+- **Rate limits and cost.** Streaming doesn't change pricing, but it makes AI features feel good enough that people use them more. Keep per-user limits on the server.
+- **Test on a real Android device** over mobile data. That's where buffering and render performance problems show up first.
+
+## Alternatives
+
+- **Vercel's AI SDK** has an [Expo guide](https://ai-sdk.dev/docs/getting-started/expo) and handles the streaming protocol and chat state for you. If your backend already uses it, it's a good choice; the same principles (server-held key, expo/fetch, cancel on leave) still apply.
+- **Server-Sent Events** work too, with a library on the React Native side. NDJSON over `fetch` needs no extra dependency.
+- **WebSockets** make sense when the conversation is two-way in real time (voice, collaborative sessions), not for one answer per request.
+
+For long audio rather than text, the bottleneck is processing time, not display; I wrote about that in [transcribing long audio faster](/blog/transcribe-long-audio-faster-openai-api). And for the rest of the production picture, see the [React Native in production guide](/guides/react-native-in-production).
+
+## Checklist
+
+- The API key stays on the server; the app calls your authenticated route.
+- The server forwards only text deltas, "done" and safe error messages, as NDJSON.
+- The app reads the body with `expo/fetch` and parses only complete lines.
+- State updates are batched to once per frame.
+- Stop button and screen exit abort the request, and the server stops generating.
+- Partial answers survive errors; Markdown rendering tolerates incomplete input.
+- Streaming verified in production, through your real proxy, on a real Android device.
+
+## FAQ
+
+### Why does my React Native stream arrive all at once?
+
+Usually because the request goes through React Native's original `fetch`, which doesn't stream response bodies. Use `fetch` from `expo/fetch`. If it streams locally but not in production, a proxy or CDN is probably buffering the response.
+
+### Can I call the OpenAI API directly from my React Native app?
+
+You shouldn't. Anything in the app can be extracted, including API keys. Stream through your own server, which also lets you authenticate users and rate-limit them.
+
+### Is streaming more expensive than a normal request?
+
+No. You pay for the same tokens. Streaming can even save money if users stop answers early and your server cancels the generation.
