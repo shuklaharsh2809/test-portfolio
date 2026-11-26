@@ -68,7 +68,12 @@ export const guides: readonly Guide[] = [
         title: "Working with AI coding agents",
         intro:
           "Agents now write a large share of code. The job shifts to giving them the right context, reviewing what they produce, and owning the result.",
-        slugs: ["ai-agents-who-makes-sure-its-right", "agents-md-guide", "how-to-review-ai-generated-code"],
+        slugs: [
+          "will-ai-replace-software-developers",
+          "ai-agents-who-makes-sure-its-right",
+          "agents-md-guide",
+          "how-to-review-ai-generated-code",
+        ],
       },
       {
         title: "Building AI features",
