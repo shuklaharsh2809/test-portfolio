@@ -1,20 +1,35 @@
 import { ArrowLeft } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import PostCard from "@/components/PostCard";
 import PostCta from "@/components/PostCta";
 import { getPosts } from "@/lib/blog";
 import { profile, SITE_URL } from "@/lib/data";
-import { reactNativeGuide as guide } from "@/lib/guides";
+import { getGuide, guidePath, guides } from "@/lib/guides";
 
-export const metadata: Metadata = {
-  title: `${guide.title}: A Practical Guide — ${profile.name}`,
-  description: guide.description,
-  alternates: { canonical: guide.path },
-  openGraph: { type: "website", title: `${guide.title}: A Practical Guide`, description: guide.description },
-};
+// Guides only change through a deploy, so every page is built ahead of time.
+export const dynamicParams = false;
 
-export default async function ReactNativeGuide() {
+export function generateStaticParams() {
+  return guides.map((guide) => ({ slug: guide.slug }));
+}
+
+export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
+  const guide = getGuide((await params).slug);
+  if (!guide) return {};
+  return {
+    title: `${guide.title}: A Practical Guide — ${profile.name}`,
+    description: guide.description,
+    alternates: { canonical: guidePath(guide) },
+    openGraph: { type: "website", title: `${guide.title}: A Practical Guide`, description: guide.description },
+  };
+}
+
+export default async function GuidePage({ params }: { params: Promise<{ slug: string }> }) {
+  const guide = getGuide((await params).slug);
+  if (!guide) notFound();
+
   const posts = await getPosts();
   const bySlug = new Map(posts.filter((post) => !post.draft).map((post) => [post.slug, post]));
   const sections = guide.sections
@@ -27,7 +42,7 @@ export default async function ReactNativeGuide() {
     "@type": "CollectionPage",
     name: `${guide.title}: A Practical Guide`,
     description: guide.description,
-    url: `${SITE_URL}${guide.path}`,
+    url: `${SITE_URL}${guidePath(guide)}`,
     author: { "@type": "Person", name: profile.name, url: SITE_URL },
     mainEntity: {
       "@type": "ItemList",
@@ -53,11 +68,7 @@ export default async function ReactNativeGuide() {
         <h1 className="mt-4 text-4xl font-semibold leading-[1.08] tracking-[-0.04em] text-foreground sm:text-5xl">
           {guide.title}: <span className="gradient-text">a practical guide</span>
         </h1>
-        <p className="mt-4 text-lg leading-8 text-muted">
-          What it takes to build React Native apps that hold up with real users, from my work with the Appeneure team on
-          production apps like GoodHuman, an NDIS workforce platform used by thousands of people every day, and OneKey
-          Notes. Each article is a complete guide to one problem; read them in order or jump to what you need.
-        </p>
+        <p className="mt-4 text-lg leading-8 text-muted">{guide.intro}</p>
       </header>
 
       <nav aria-label="Guide sections" className="mt-8 tile">
