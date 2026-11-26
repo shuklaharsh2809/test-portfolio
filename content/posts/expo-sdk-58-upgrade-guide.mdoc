@@ -1,0 +1,163 @@
+---
+title: 'Expo SDK 58 Upgrade Guide: React Native 0.88, iOS 27 and What Breaks'
+summary: >-
+  Upgrading to Expo SDK 58: what's new (iOS 27 scenes, foldables, App Intents), every breaking change that matters, and a safe step-by-step upgrade plan.
+publishedAt: 2026-11-26
+draft: false
+tags:
+  - Expo
+  - React Native
+  - Mobile
+  - Upgrades
+cover: /blog/expo-sdk-58-upgrade-guide/cover.jpg
+---
+Expo SDK 58 shipped on October 15, 2026. It moves React Native from 0.86 to **0.88** (so you get the 0.87 changes too), adds support for the **iOS 27 SDK**, and changes more defaults than a typical release: the iOS app life cycle, Android release builds, TypeScript types and Expo Router's web output.
+
+None of it is hard, but several changes fail quietly: a type error you only see in CI, an orientation lock that stops working, a library that breaks only in release builds. This guide covers what's new, what breaks, and the order I'd upgrade a production app in. Everything here comes from Expo's [SDK 58 changelog](https://expo.dev/changelog/sdk-58) and [upgrade guide](https://expo.dev/blog/how-to-upgrade-to-sdk-58).
+
+![The SDK 58 upgrade path: check Node and Xcode, upgrade packages with expo install --fix, run expo-doctor and the type check, make a new development build, fix breaking changes, then test release builds before a staged rollout](/blog/expo-sdk-58-upgrade-guide/upgrade-steps.jpg)
+
+## What's new in SDK 58
+
+- **iOS 27 scene life cycle.** The iOS 27 SDK requires UIKit's scene-based life cycle, so `npx expo prebuild` now generates `SceneDelegate.swift` and a `UIApplicationSceneManifest` entry in `Info.plist`. Expo forwards URL, user activity, life cycle and quick action events to existing `ExpoAppDelegate` subscribers, so most config plugins keep working.
+- **Resizable iPhone apps and foldables.** iOS 27 makes iPhone apps resizable. The new `expo-hinge` package (`useHinge()`, `getHinge()`, `addHingeListener()`) reports the hinge state on iOS 27.1+ and Android 11 foldables.
+- **Siri, Shortcuts, Spotlight and Apple Intelligence.** `expo-app-intents` (alpha) exposes your app's actions and content to the system. You declare intents in Swift inline modules, and invocations are delivered to JavaScript.
+- **Android home screen widgets** in `expo-widgets`.
+- **Expo Router:** data loaders, server-side rendering and middleware are now stable, along with native tabs and toolbars.
+- **Fewer native rebuilds.** Fingerprinting now uses the `balanced` preset by default, so bumping `version` in `app.json` or changing files inside `node_modules` no longer produces a new fingerprint. If you use fingerprints to decide when a store build is needed (versus an OTA update), you'll rebuild less often.
+
+## Before you start
+
+Check these first, because they block the upgrade itself:
+
+- **Node.js:** Expo tooling now needs Node 22.13+ on the 22 line, 24.3+ on the 24 line, or Node 26+. Odd-numbered releases (23, 25) aren't supported.
+- **EAS Build image:** the `sdk-58` and `latest` iOS images now use Xcode 27.1. If `eas.json` pins a specific image, change it or remove it.
+- **Expo Go:** the Expo Go that supports SDK 58 rolls out to the stores after the SDK, and supports *only* SDK 58. For a production app you should be on a [development build](https://docs.expo.dev/develop/development-builds/introduction/) anyway; that's what you'll test with.
+- **macOS:** SDK 58 doesn't support macOS yet; support returns when `react-native-macos` reaches 0.86.
+
+## Step-by-step upgrade
+
+**1. Start from a clean branch.** Commit everything first, so every upgrade change is reviewable on its own.
+
+**2. Upgrade the packages:**
+
+```bash
+npx expo install expo@^58.0.0 --fix
+npx expo-doctor@latest
+```
+
+The first command upgrades `expo` and aligns your other Expo packages with SDK 58. The second checks for common project problems. Fix what `expo-doctor` reports before moving on.
+
+**3. If you commit your `ios` and `android` folders** (no Continuous Native Generation), apply the native changes too, using Expo's [native project upgrade helper](https://docs.expo.dev/bare/upgrade/). The scene life cycle change matters most here.
+
+**4. Run your type check immediately.** The Strict TypeScript API change (below) shows up as type errors, and it's better to see them all at once than one by one in CI:
+
+```bash
+npx tsc --noEmit
+```
+
+**5. Make a new development build** and run the app on real devices, then work through the breaking changes below.
+
+## What breaks, and how to fix it
+
+### TypeScript: the Strict TypeScript API is now the default
+
+React Native 0.87 made the [Strict TypeScript API](https://reactnative.dev/docs/strict-typescript-api) the default:
+
+- **Deep imports from `react-native/Libraries/*` are now type errors.** Import from `react-native` itself. If a dependency does this, there's a temporary `react-native-legacy-deep-imports` condition, but treat it as a stopgap.
+- **Refs use instance types** such as `ViewInstance` and `TextInputInstance`:
+
+```tsx
+import { useRef } from "react";
+import { TextInput, type TextInputInstance } from "react-native";
+
+export function SearchBox() {
+  const input = useRef<TextInputInstance>(null);
+  return <TextInput ref={input} placeholder="Search" />;
+}
+```
+
+### Removed React Native APIs
+
+- **`InteractionManager` is removed.** Use `requestIdleCallback` for deferred work.
+- The **`Touchable` root export** is removed, as are the **`NativeMethods`** types.
+- **`Modal`'s `animated` prop** is removed.
+- **`StatusBar`'s `backgroundColor`, `translucent` and `networkActivityIndicatorVisible`** props (already deprecated) are removed.
+- **`ImageBackground` is deprecated** in favor of a `View` with an absolutely positioned `Image`.
+
+Search your code for these before building; it's quicker than waiting for errors:
+
+```bash
+grep -rnE "InteractionManager|react-native/Libraries/|ImageBackground" --include=*.ts --include=*.tsx src app
+```
+
+### iOS: scene life cycle and orientation
+
+- If you enabled `ios.enableSceneSupport` in `expo-build-properties` on SDK 57, **remove it**: SDK 58 includes scene support.
+- If you **override app delegate methods** in `AppDelegate.swift`, maintain your `ios` folder by hand, or have a bare React Native app, follow the [scene life cycle migration guide](https://expo.fyi/ios-scene-lifecycle).
+- **Orientation locks:** because iOS 27 iPhone apps are resizable, `requireFullScreen` no longer opts your app out, and `ScreenOrientation.lockAsync` may have no effect while the app is resizable. If your app depends on a fixed orientation (camera screens, video players), test this specifically.
+
+### Android: R8 is on in release builds
+
+The Android template now enables **R8** (code shrinking and obfuscation) in release builds by default. It makes apps smaller and faster to start, but libraries that rely on reflection can break **only in release builds**, which is exactly where you don't look during development.
+
+Build a release variant and test the main flows. If something breaks, add ProGuard keep rules through `expo-build-properties`, or opt out temporarily by setting `android.enableMinifyInReleaseBuilds` to `false`.
+
+### Expo Router
+
+- `expo-router/unstable-native-tabs` is now **`expo-router/native-tabs`**.
+- **Server output by default on web:** if `web.output` isn't set, projects now use `"server"`. To keep the SDK 57 behavior, set `web.output` to `"static"` and enable the `apiRoutes` option of the `expo-router` config plugin.
+- **iOS 26+ stack headers** are transparent with Liquid Glass by default, and content goes under them. Check screens that assumed an opaque header.
+- Custom navigators should use `createStandardRouterNavigator` or `integrateWithRouter` instead of `withLayoutContext`. Read the [Router migration guide](https://docs.expo.dev/router/migrate/sdk-57-to-58/) even if you only use the built-in navigators.
+
+### Package changes that change behavior
+
+- **`expo-notifications`:** foreground notifications are now **shown by default** unless your `setNotificationHandler` says otherwise. If you relied on them being hidden, set a handler explicitly (my [push notifications guide](/blog/react-native-push-notifications-fcm-2026) shows one).
+- **`expo-file-system`:** `File.write()` is now async and returns a promise. Add `await`, or use `File.writeSync()` for the old behavior.
+- **`expo-sqlite`:** libSQL support is removed.
+- **`expo-media-library`:** `getUri()` returns the current version of an asset; pass `version: AssetUriVersion.ORIGINAL` for the old result.
+- **`NODE_ENV`:** Expo CLI now sets `NODE_ENV` to `development` or `production` based on the command, so `NODE_ENV=test npx expo start` loads `.env.development`. Check scripts that depend on custom values.
+
+## Ship it safely
+
+An SDK upgrade changes native code, so it **can't be shipped as an OTA update**: it needs a new store build, and your `runtimeVersion` should change so old builds never receive JavaScript written for the new native code.
+
+Treat it like any risky release:
+
+- Test **release builds** on a real iPhone and a mid-range Android phone, not just the development build.
+- Run your regression list: sign-in, core flows, payments, notifications, deep links.
+- Release with a **staged rollout** and watch crash reporting for the first days. (I wrote about [shipping React Native releases safely, twice a week](/blog/ship-react-native-app-twice-a-week).)
+
+## Can a coding agent do the upgrade?
+
+Expo now recommends it as an option: its [expo-upgrade skill](https://github.com/expo/skills/tree/main/plugins/expo/skills/expo-upgrade) gives coding agents guidance on dependency checks and migrations. It's a reasonable way to do the mechanical part. Just review the diff like any other change, and do the device testing yourself: an agent can't tell you that your camera screen now rotates.
+
+## Checklist
+
+- Node 22.13+ / 24.3+ / 26+, and the EAS image updated for Xcode 27.1.
+- `npx expo install expo@^58.0.0 --fix`, then `npx expo-doctor@latest`.
+- Native folders upgraded if you don't use CNG; `ios.enableSceneSupport` removed.
+- Type check passes (no deep imports, instance types for refs).
+- Removed APIs replaced: `InteractionManager`, `Modal animated`, `StatusBar` props.
+- Orientation tested on iOS 27; headers checked on iOS 26+.
+- Release build tested on Android with R8.
+- `File.write()` awaited; notification handler explicit.
+- New store build with a new `runtimeVersion`, released in stages.
+
+## FAQ
+
+### What React Native version does Expo SDK 58 use?
+
+React Native 0.88, with React 19.3. Upgrading from SDK 57 also brings in the changes from React Native 0.87.
+
+### Do I have to upgrade to SDK 58 now?
+
+Not immediately, but the iOS 27 SDK requires the scene life cycle, and the store submission requirements move to new Xcode versions over time. Plan the upgrade soon rather than under a deadline.
+
+### Why did my app break only in the Android release build?
+
+Most likely R8, which SDK 58 enables in release builds by default. Libraries that use reflection may need keep rules. Add them with `expo-build-properties`, or temporarily set `android.enableMinifyInReleaseBuilds` to `false`.
+
+### Can I ship the SDK 58 upgrade as an over-the-air update?
+
+No. It changes native code, so it needs a new store build and a new `runtimeVersion`.

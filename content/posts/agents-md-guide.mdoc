@@ -1,0 +1,152 @@
+---
+title: 'AGENTS.md: How to Set Up Your Codebase for AI Coding Agents (2026 Guide)'
+summary: >-
+  What AGENTS.md is, which coding agents read it, what to put in it (with a real example), monorepo nesting, Claude Code setup, and the mistakes to avoid.
+publishedAt: 2026-11-26
+draft: false
+tags:
+  - AI
+  - AI Agents
+  - Developer Tools
+  - Software Engineering
+cover: /blog/agents-md-guide/cover.jpg
+---
+Coding agents have gone mainstream fast. According to [GitHub's Octoverse 2026](https://github.blog/news-insights/octoverse/octoverse-commits-pushes-reach-new-highs-in-2026-as-developers-build-with-agents/), "by September 2026, more than 40% of pull requests on GitHub started with an agent's first draft, up from 17% in March." In the [Stack Overflow 2026 survey](https://stackoverflow.blog/2026/10/06/the-results-of-the-2026-developer-survey-are-here/), 73% of developers who use AI coding assistants or agents use them daily.
+
+But an agent starts every task knowing nothing about your project: how to run the tests, which folder owns what, which patterns your team stopped using last year. It guesses, and guesses produce plausible code that doesn't fit. **AGENTS.md** is the simplest fix: one file that tells every coding agent how your project works.
+
+![How AGENTS.md is used: the agent reads the nearest AGENTS.md before working, learns the project's commands, structure, conventions and rules, and the team updates the file when the agent repeats a mistake](/blog/agents-md-guide/agents-md-flow.jpg)
+
+## What AGENTS.md is
+
+AGENTS.md is a plain Markdown file at the root of your repository, written for coding agents the way a README is written for people. OpenAI released it in August 2025, and since December 2025 it has been stewarded by the **Agentic AI Foundation** under the Linux Foundation, alongside the Model Context Protocol (MCP).
+
+There's no special syntax: just Markdown headings and lists. The [official site](https://agents.md) lists many tools that read it, including OpenAI Codex, GitHub Copilot's coding agent, Cursor, Gemini CLI, Jules, Devin, VS Code, Zed and Windsurf. Claude Code supports it too (more on that below).
+
+## Why it matters
+
+Agents are good at writing code, and bad at knowing what *your* project expects. Without instructions, they:
+
+- run the wrong test command, or none at all,
+- add a new library for something you already solve one way,
+- put files in the wrong place, or copy a pattern you're migrating away from,
+- skip steps every human on the team knows (generating types, updating a changelog).
+
+Octoverse also notes that among repositories created this year, "the average repo with an agent configuration file logged eight times as many commits as the average new repo without one." That's a correlation, not proof that the file causes it; teams that set up agent instructions are probably the teams using agents heavily. But it shows where active teams are going.
+
+## What to put in it
+
+Keep it short, specific and true. These are the sections I'd include, roughly matching the [official recommendations](https://agents.md):
+
+1. **Project overview:** one paragraph on what the project is and how it's structured.
+2. **Commands:** install, dev server, tests, lint, type check, build. Exact commands, copy-pasteable.
+3. **Code style and conventions:** only what tools don't already enforce.
+4. **Testing:** how to run one test, where tests live, what must be tested.
+5. **Rules and boundaries:** what the agent must never do.
+6. **PR and commit conventions.**
+
+Here's an example for a React Native app with an API:
+
+```markdown
+# AGENTS.md
+
+## Project
+Expo (React Native) app in `app/`, Node API in `server/`, shared types in `packages/types/`.
+The app never calls third-party APIs with secret keys; the server does.
+
+## Commands
+- Install: `pnpm install`
+- App: `pnpm --filter app start`
+- Tests: `pnpm test` (one file: `pnpm test path/to/file.test.ts`)
+- Before finishing any task: `pnpm lint && pnpm typecheck && pnpm test`
+
+## Conventions
+- Data fetching goes through hooks in `app/src/api/`; don't call `fetch` in components.
+- Lists use FlashList with `keyExtractor` on the record ID.
+- New screens go in `app/src/screens/<feature>/`.
+- Dates are formatted with `formatDate()` from `packages/types`; don't add date libraries.
+
+## Testing
+- Every bug fix includes a test that fails before the fix.
+- Server endpoints need a test that a user cannot read another account's data.
+
+## Never
+- Never commit `.env` files or put secrets in the app.
+- Never edit generated files in `packages/types/generated/`; run `pnpm codegen`.
+- Never change database migrations that have already been merged; add a new one.
+
+## Pull requests
+- Title: `[app|server] Short description`.
+- Explain what you changed and how you verified it.
+```
+
+Notice what's *not* there: a long architecture essay, the full API documentation, or rules the linter already enforces. Agents read the whole file on every task, so every line should earn its place.
+
+## Nested files for monorepos
+
+You can place an AGENTS.md in each package. From the official FAQ: "The closest AGENTS.md to the edited file wins; explicit user chat prompts override everything." So the root file holds project-wide rules, and `server/AGENTS.md` can add "use the transaction helper for multi-table writes" without cluttering the app's instructions.
+
+## Using AGENTS.md with Claude Code
+
+Claude Code's own instructions file is `CLAUDE.md`, and according to [its documentation](https://code.claude.com/docs/en/memory), recent versions (v2.1.277 and later) can read `AGENTS.md` directly:
+
+- If there's an `AGENTS.md` and **no** `CLAUDE.md` (or `CLAUDE.local.md`) in your working directory or above it, Claude Code reads `AGENTS.md`.
+- If there's a `CLAUDE.md`, it reads that instead, by default.
+
+The most robust setup when your team uses several tools is to keep the shared instructions in `AGENTS.md` and import it from `CLAUDE.md`, with Claude-specific notes below:
+
+```markdown
+@AGENTS.md
+
+## Claude Code
+- Use plan mode for changes that touch more than one package.
+```
+
+That way there's one source of truth, and every tool reads the same rules.
+
+## AGENTS.md, skills and MCP
+
+These three are often confused:
+
+- **AGENTS.md:** always-on project context. Read at the start of every task.
+- **Agent Skills (`SKILL.md`):** instructions for a specific procedure (a release, a migration), loaded only when relevant. Good for long, occasional workflows that would bloat AGENTS.md.
+- **MCP:** gives agents access to tools and data (a database, an issue tracker, documentation).
+
+Start with AGENTS.md. Add skills when a procedure is long and occasional, and MCP when the agent needs live data.
+
+## Keep it alive
+
+The best AGENTS.md files grow from real mistakes:
+
+- **When an agent makes the same mistake twice, add a line.** That's the highest-value maintenance there is.
+- **Review it like code.** Changes to AGENTS.md change how every agent works on the project; put them in pull requests.
+- **Delete what's no longer true.** Outdated instructions are worse than none, because agents follow them confidently.
+
+And remember what the file can't do: it makes agents' work more consistent, not automatically correct. Every change still needs review and tests ([my checklist for reviewing AI-generated code](/blog/how-to-review-ai-generated-code)), and someone still has to [own what ships](/blog/ai-agents-who-makes-sure-its-right).
+
+## Checklist
+
+- `AGENTS.md` at the repo root, short and specific.
+- Exact commands for install, test, lint, type check and build.
+- Conventions that tools don't enforce, plus a clear "never" list.
+- Nested files in packages with different rules.
+- `CLAUDE.md` imports `@AGENTS.md` if your team also uses Claude Code.
+- Updated whenever an agent repeats a mistake; reviewed in pull requests.
+
+## FAQ
+
+### Is AGENTS.md the same as README.md?
+
+No. A README is for people: what the project is and how to get started. AGENTS.md is for coding agents: exact commands, conventions and rules they need on every task. Keep them separate so each stays focused.
+
+### Does Claude Code read AGENTS.md?
+
+Yes, in recent versions it reads `AGENTS.md` when there's no `CLAUDE.md`. If you have both, import AGENTS.md from CLAUDE.md with `@AGENTS.md`, so Claude Code follows the same instructions as your other tools.
+
+### How long should AGENTS.md be?
+
+As short as possible while still being complete: usually one or two screens. Move long, occasional procedures into separate documents or skills.
+
+### Should I commit AGENTS.md?
+
+Yes. It's project documentation that every contributor, human or agent, benefits from, and changes to it should be reviewed like code.
