@@ -19,8 +19,9 @@ export const reactNativeGuide = {
     {
       title: "Features users rely on",
       intro:
-        "Notifications, location and payments look simple in a demo and turn fragile in production. These guides cover the details that decide whether they work for every user.",
+        "AI responses, notifications, location and payments look simple in a demo and turn fragile in production. These guides cover the details that decide whether they work for every user.",
       slugs: [
+        "react-native-stream-ai-responses",
         "react-native-push-notifications-fcm-2026",
         "react-native-location-restriction-geofence",
         "react-native-in-app-subscriptions-revenuecat",
