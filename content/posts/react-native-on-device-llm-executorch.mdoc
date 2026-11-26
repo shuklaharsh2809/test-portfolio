@@ -1,0 +1,209 @@
+---
+title: 'Run an LLM On-Device in React Native with ExecuTorch (Private, Offline AI)'
+summary: >-
+  Add private, offline AI to a React Native app: run a small LLM on the phone with React Native ExecuTorch, stream tokens, stop generation, pick a model.
+publishedAt: 2026-11-26
+draft: false
+tags:
+  - React Native
+  - AI
+  - On-Device AI
+  - Privacy
+cover: /blog/react-native-on-device-llm-executorch/cover.jpg
+---
+Most AI features in mobile apps send the user's text to a server. That's the right choice for many features, but not all of them: some data is too sensitive to leave the phone, some users are offline, and some tasks are small enough that a round trip to the cloud is overkill.
+
+Small language models now run well on recent phones, and **React Native ExecuTorch** (from Software Mansion, built on Meta's ExecuTorch runtime) makes them usable from React Native with a hook. This guide shows how to add an on-device chat model, stream its output, and decide when on-device is the right call.
+
+One warning before you search for other tutorials: **the API changed in version 0.11**. Many guides use `useLLM` and `initExecutorch`, which now live in a deprecated `react-native-executorch/legacy` entry point. This guide uses the current `useLLMChatSession` API (version 0.11.1).
+
+![On-device vs. cloud AI: on-device keeps data on the phone and works offline but uses a small model, a one-time download and phone memory; cloud AI uses large models and needs a network, a server and an API key](/blog/react-native-on-device-llm-executorch/device-vs-cloud.jpg)
+
+## When on-device AI is the right choice
+
+**Good fits:**
+
+- **Sensitive text** that shouldn't leave the device: personal notes, health or financial details, private messages.
+- **Offline use:** field workers, travel, poor connectivity.
+- **Small, frequent tasks:** rewriting a sentence, extracting a date, classifying a note, short summaries.
+- **No per-request cost:** once the model is downloaded, inference is free for you.
+
+**Poor fits:**
+
+- Tasks that need current knowledge or long, complex reasoning.
+- Very long documents (small models have limited context).
+- Apps that must support older or low-memory phones.
+
+A common production pattern is **hybrid**: run small, private tasks on the device, and send heavier tasks to a cloud model through your server (as in [my guide to streaming AI responses](/blog/react-native-stream-ai-responses)), with the user's consent.
+
+## Requirements
+
+From the library's README:
+
+- **New Architecture** enabled.
+- **React Native 0.83+**, or **Expo SDK 55+ with a development build.** Expo Go isn't supported, because the library includes custom native C++ code.
+- **iOS 17.0+ and Android 13+** (`minSdkVersion` 26 or higher).
+- **`react-native-worklets`** 0.10 or newer, with its Babel plugin as the **last** plugin in your Babel config.
+
+## Step 1: Install
+
+```bash
+npm install react-native-executorch react-native-worklets react-native-blob-util
+```
+
+Add the worklets Babel plugin last:
+
+```js
+// babel.config.js
+module.exports = function (api) {
+  api.cache(true);
+  return {
+    presets: ["babel-preset-expo"],
+    plugins: [
+      // ...your other plugins
+      "react-native-worklets/plugin", // must be last
+    ],
+  };
+};
+```
+
+Then restart Metro with a clean cache (`npx expo start --clear`) and make a new development build.
+
+## Step 2: Load a model
+
+Models are listed in the `models` registry. Each has a `DEFAULT` variant that picks the best backend for the platform:
+
+```ts
+import { models, useLLMChatSession } from "react-native-executorch";
+
+const chat = useLLMChatSession(models.llm.QWEN3_0_6B.DEFAULT, {
+  initialMessages: [{ role: "system", content: "You are a concise assistant inside a notes app." }],
+  generationConfig: { temperature: 0.7, maxNewTokens: 512 },
+});
+```
+
+On first use, the hook downloads the model and tracks `downloadProgress` (0 to 100). After that, it's cached on the device. `isReady` becomes true when the model is loaded, and `error` holds any download or load error.
+
+The session functions (`sendMessage`, `stop`, `getHistory`) are `undefined` until the model is ready, so check before calling them.
+
+## Step 3: Chat, stream tokens, and stop
+
+`sendMessage` takes the user's message and an `onToken` callback for streaming, and resolves with the finished turn. `stop()` interrupts generation; the turn then resolves with `finishReason: "cancelled"`.
+
+```tsx
+import { useState } from "react";
+import { Button, ScrollView, Text, TextInput, View } from "react-native";
+import { models, useLLMChatSession } from "react-native-executorch";
+
+type Bubble = { role: "user" | "assistant"; text: string };
+
+export function PrivateAssistant() {
+  const chat = useLLMChatSession(models.llm.QWEN3_0_6B.DEFAULT, {
+    initialMessages: [{ role: "system", content: "You are a concise assistant inside a notes app." }],
+    generationConfig: { temperature: 0.7, maxNewTokens: 512, enableThinking: false },
+  });
+
+  const [input, setInput] = useState("");
+  const [bubbles, setBubbles] = useState<Bubble[]>([]);
+  const [streaming, setStreaming] = useState("");
+  const [generating, setGenerating] = useState(false); // the hook doesn't track this for you
+
+  async function send() {
+    const text = input.trim();
+    if (!text || !chat.sendMessage || generating) return;
+    setInput("");
+    setBubbles((current) => [...current, { role: "user", text }]);
+    setGenerating(true);
+
+    let reply = "";
+    try {
+      const turn = await chat.sendMessage(text, (token) => {
+        reply += token;
+        setStreaming(reply);
+      });
+      const finalText = turn.finishReason === "cancelled" ? `${reply} (stopped)` : reply;
+      setBubbles((current) => [...current, { role: "assistant", text: finalText }]);
+    } catch {
+      setBubbles((current) => [...current, { role: "assistant", text: "Something went wrong. Please try again." }]);
+    } finally {
+      setStreaming("");
+      setGenerating(false);
+    }
+  }
+
+  if (chat.error) return <Text>Couldn't load the model: {chat.error.message}</Text>;
+  if (!chat.isReady) return <Text>Downloading the model… {chat.downloadProgress.toFixed(0)}%</Text>;
+
+  return (
+    <View style={{ flex: 1, padding: 16 }}>
+      <ScrollView style={{ flex: 1 }}>
+        {bubbles.map((bubble, index) => (
+          <Text key={index} style={{ marginVertical: 4, fontWeight: bubble.role === "user" ? "600" : "400" }}>
+            {bubble.text}
+          </Text>
+        ))}
+        {generating ? <Text style={{ opacity: 0.7 }}>{streaming || "…"}</Text> : null}
+      </ScrollView>
+      <TextInput value={input} onChangeText={setInput} placeholder="Ask privately, even offline" />
+      {generating ? (
+        <Button title="Stop" onPress={() => chat.stop?.()} />
+      ) : (
+        <Button title="Send" onPress={send} />
+      )}
+    </View>
+  );
+}
+```
+
+A few details worth knowing:
+
+- **One turn at a time.** Calling `sendMessage` while a turn is running throws a `RESOURCE_BUSY` error, which is why the example tracks `generating`.
+- **The session remembers the conversation.** Use `getHistory()` to read it. A stopped turn is removed from the history.
+- **Smooth rendering.** `onToken` fires for every token. For long answers, batch updates to once per frame, the same technique I use for [streaming from a server](/blog/react-native-stream-ai-responses).
+- **Context is limited.** `getKVCacheState()` reports how much of the model's context window is used, so you can start a new session before it fills up.
+
+## Step 4: Choose a model
+
+The registry includes models from about 135 million to several billion parameters, including SmolLM2, Qwen 3, Llama 3.2, LFM 2.5, Phi-4 mini and Gemma 4. Downloads range from about 150 MB to several GB.
+
+How I'd choose:
+
+- **Start small** (Qwen 3 0.6B or SmolLM2 360M) for short, structured tasks: classification, extraction, short rewrites.
+- **Move up** (around 1–2B parameters) only if quality isn't good enough, and test on your users' actual phones.
+- **Measure memory and speed on a mid-range device,** not your own flagship phone. A model that runs well on a new iPhone may be too slow, or get the app terminated, on an older Android.
+
+## Production considerations
+
+- **Ask before downloading.** A model can be hundreds of megabytes. Explain why, show the size, and prefer Wi-Fi.
+- **Free memory when you're done.** The hook releases the model's native memory when the component unmounts, so mount the chat screen only when it's in use.
+- **Telemetry:** downloads of the library's pre-exported models send an anonymous download event. Call `setTelemetryEnabled(false)` to opt out, and mention on-device processing in your privacy policy accurately.
+- **Treat output with the same care as cloud AI.** Small models make more mistakes. Validate structured output, and let users confirm before anything important is saved (the same rule as in my post on [keeping AI features safe in React Native](/blog/react-native-ai-api-key-security)).
+- **Plan for capability differences:** detect older OS versions and low-memory devices, and fall back to a cloud feature or hide the feature.
+
+## Checklist
+
+- New Architecture, React Native 0.83+ or Expo SDK 55+ with a development build.
+- Worklets Babel plugin last; Metro cache cleared.
+- Current API: `useLLMChatSession` and the `models` registry, not the legacy `useLLM`.
+- Download consent, progress and errors handled in the UI.
+- `generating` state, a stop button, and one turn at a time.
+- Smallest model that does the job, tested on a mid-range Android phone.
+- Cloud fallback for unsupported devices and heavier tasks.
+
+## FAQ
+
+### Can I run an LLM in Expo Go?
+
+No. React Native ExecuTorch includes custom native code, so it needs a development build (Expo SDK 55 or newer).
+
+### How big are on-device models?
+
+In this library's registry, downloads range from about 150 MB for the smallest models to several GB for the largest. Small models (under 1B parameters) are the practical starting point for most apps.
+
+### Is on-device AI completely private?
+
+The prompts and responses stay on the device. The model download itself comes from a server, and the library sends an anonymous download event unless you disable it with `setTelemetryEnabled(false)`.
+
+### What happened to useLLM?
+
+In version 0.11, `useLLM` moved to the deprecated `react-native-executorch/legacy` entry point. New code should use `useLLMChatSession`.

@@ -22,6 +22,7 @@ export const reactNativeGuide = {
         "AI responses, notifications, location and payments look simple in a demo and turn fragile in production. These guides cover the details that decide whether they work for every user.",
       slugs: [
         "react-native-stream-ai-responses",
+        "react-native-on-device-llm-executorch",
         "react-native-push-notifications-fcm-2026",
         "react-native-location-restriction-geofence",
         "react-native-in-app-subscriptions-revenuecat",
@@ -36,7 +37,7 @@ export const reactNativeGuide = {
       title: "Shipping safely",
       intro:
         "Small, frequent releases with a clear rollback plan, and careful review of every change, including the ones written by AI.",
-      slugs: ["ship-react-native-app-twice-a-week", "how-to-review-ai-generated-code"],
+      slugs: ["ship-react-native-app-twice-a-week", "expo-sdk-58-upgrade-guide", "how-to-review-ai-generated-code"],
     },
   ] satisfies GuideSection[],
 } as const;

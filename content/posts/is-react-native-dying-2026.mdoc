@@ -1,0 +1,106 @@
+---
+title: 'Is React Native Dying? What Shopify and Discord Leaving Really Means (2026)'
+summary: >-
+  Shopify went back to native and Discord plans to drop React Native. What they actually said, why AI changed the math, and when React Native still wins.
+publishedAt: 2026-11-26
+draft: false
+tags:
+  - React Native
+  - Mobile
+  - AI
+  - Opinion
+cover: /blog/is-react-native-dying-2026/cover.jpg
+---
+In September, Shopify, for years React Native's most famous advocate, announced it's moving its apps back to Swift and Kotlin. In November, Discord's CTO said React Native "goes away" in Discord's next client. The same week, Expo's co-founder previewed an experimental new app framework written in Rust.
+
+So, is React Native dying? I build React Native apps for a living, so I have a stake in the answer. Here's what these companies actually said, what's really changing, and how I'd make the decision for a new app today.
+
+## What actually happened
+
+### Shopify: "Native is now the future of mobile at Shopify"
+
+In 2020, Shopify published "React Native is the Future of Mobile at Shopify" and moved all new apps to React Native. On September 10, 2026, it published [the reversal](https://shopify.engineering/back-to-native). The key lines:
+
+- "LLMs changed one of the core assumptions behind our 2020 decision, so we reevaluated our mobile stack from first principles."
+- "React Native was working well for us, and it remains an excellent framework." And on performance: "React Native apps can be fast. Ours are."
+- "We are making this change because agents have reduced the advantages of sharing implementation, while the advantages of building for each platform remain."
+
+Their Shop app has already been rebuilt natively. With AI assistance, it went from proof of concept to the app stores "in just 12 weeks". The main Shopify app is underway.
+
+Notice what Shopify did **not** say: that React Native was slow, buggy or a dead end. They said the main *cost* of going native, building every feature twice, has dropped because coding agents do much of that second implementation.
+
+### Discord: one Rust codebase for every platform
+
+On November 4, Discord's CTO Stanislav Vishnevskiy [described a new client](https://www.infoq.com/news/2026/11/discord-rust-rewrite-gpui-zed/) where "Electron goes away, and so does React Native, mobile keeps native UI but shares app code with desktop via Rust." The desktop app moves to GPUI, the UI framework from the Zed editor. Discord's stated motivation is performance, and as of now it hasn't shipped; they "hope to get it into testing with users soon".
+
+This is a different story from Shopify's: not "native per platform", but "one shared core in Rust, with native UI on mobile". It's also a path that suits a company with years of Rust investment in its infrastructure and voice technology.
+
+### Expo previewed "Exact"
+
+Expo's co-founder Charlie Cheever shared a preview of [Exact](https://github.com/expo/exact), an experimental "agent native" app framework written in Rust. Its README describes the goal: "Write an app once. It runs natively on the web, macOS, iOS, and Linux, and an AI agent can build it, run it, see it, and test it". It also says it's pre-1.0 and changes daily. It's an experiment worth watching, not a replacement for Expo or React Native today.
+
+## Meanwhile, React Native itself
+
+The framework isn't standing still:
+
+- **React Native 0.88** shipped on October 19, 2026, with 568 commits from 91 contributors and no user-facing breaking changes, and 0.89 is scheduled for December.
+- The **New Architecture** is the only architecture: React Native 0.82 was the first release to run entirely on it.
+- **React and React Native moved to the React Foundation** under the Linux Foundation in February 2026, with members including Amazon, Callstack, Expo, Huawei, Meta, Microsoft, Software Mansion and Vercel.
+- Expo SDK 58 shipped with iOS 27 support on day one (I wrote an [upgrade guide](/blog/expo-sdk-58-upgrade-guide)).
+
+A framework that's dying doesn't usually get a foundation, a monthly release cadence and same-season support for a new iOS.
+
+## The real change: AI made "build it twice" cheaper
+
+The honest takeaway from Shopify's post is not about React Native. It's about the economics that justified cross-platform frameworks in the first place.
+
+The classic argument was: **one codebase, one team, half the work.** Coding agents weaken the "half the work" part. If an agent can translate a feature from Swift to Kotlin, write the tests and do a first review, the second implementation costs much less than it did in 2020.
+
+But "cheaper" isn't "free". Two native codebases still mean:
+
+- **Two sets of bugs to find, review and fix.** Agents write the code; people still have to verify it, and the review work doubles with the codebases. (I wrote about [who makes sure agent-built software is right](/blog/ai-agents-who-makes-sure-its-right).)
+- **Platform expertise on the team.** Someone has to judge whether the Kotlin version is actually good Android code.
+- **Two release pipelines,** and no shared over-the-air updates for JavaScript fixes.
+
+Shopify has the engineers to absorb that, plus a strong reason to want platform features (widgets, Apple Watch, Siri Shortcuts) as first-class work. Most teams are not Shopify.
+
+## When React Native still wins
+
+From my work with the team at Appeneure, building production apps for clients in Australia and the US, React Native is still the right default when:
+
+- **One small team ships both platforms.** For a startup or a client project with a few engineers, one codebase is the difference between shipping in a quarter and shipping in two.
+- **You release often.** We run [a twice-weekly release cycle](/blog/ship-react-native-app-twice-a-week) on a production app; OTA updates for JavaScript fixes and one shared codebase are a big part of what makes that sustainable.
+- **The app is mostly product logic and screens:** forms, lists, dashboards, subscriptions, notifications. That's most business apps.
+- **You share code or people with a React web app.**
+
+Native becomes the better choice when platform features are the product (deep OS integrations, heavy graphics, watch apps), when performance needs are extreme, or when you already have strong iOS and Android teams.
+
+## If you use Shopify's libraries
+
+Shopify maintained some of the ecosystem's most important libraries, and the post addresses them:
+
+- **FlashList:** Shopify says it will keep fixing critical issues that break compatibility and is in discussions about long-term stewardship. My [FlashList guide](/blog/react-native-slow-list-flatlist-flashlist) still applies; keep an eye on where the project moves.
+- **React Native Skia:** sponsored through the end of 2026; its maintainer plans to continue it under a new name.
+- **Restyle:** kept working through 2026, then archived.
+
+None of these needs action today, but if your app depends on them, note it in your upgrade planning.
+
+## My answer
+
+React Native isn't dying. What's dying is the idea that framework choice is permanent. Shopify picked React Native when it was the cheapest way to ship two platforms, and picked native when that changed. That's the right way to think about it.
+
+For most teams in 2026, especially small ones shipping business apps, React Native with Expo is still the fastest way to build and maintain a quality app on both platforms. The question to ask isn't "is React Native dead?" but "**what does it cost *my* team to build and maintain this twice?**" Answer that honestly, including review time, and the choice is usually clear.
+
+## FAQ
+
+### Why did Shopify leave React Native?
+
+Shopify said coding agents reduced the cost of building each feature natively for iOS and Android, so sharing code was no longer the deciding advantage. It explicitly said React Native "remains an excellent framework" and that its React Native apps were fast.
+
+### Is Discord dropping React Native?
+
+Discord's CTO said its next client shares app code across platforms in Rust, with native UI on mobile, so React Native "goes away". As of November 2026, it hasn't shipped.
+
+### Should I still learn React Native in 2026?
+
+Yes, if you want to build mobile apps on small teams. React Native is actively developed, widely used, and the skills (React, TypeScript, mobile fundamentals) transfer. Learning some Swift or Kotlin as well makes you more valuable either way.
