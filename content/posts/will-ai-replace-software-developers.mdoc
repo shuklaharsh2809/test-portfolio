@@ -1,0 +1,111 @@
+---
+title: 'Will AI Replace Software Developers? Hype vs. Reality (2026)'
+summary: >-
+  AI won't finish software development, but it is changing the job fast. Separating the hype from what's actually happening, and the skills worth building now.
+publishedAt: 2026-11-26
+draft: false
+tags:
+  - AI
+  - Software Engineering
+  - Career
+  - Opinion
+cover: /blog/will-ai-replace-software-developers/cover.jpg
+---
+"Will AI replace software developers?" is a question I hear from students, from friends outside tech, and from developers early in their careers. My short answer: **AI will not finish software development, but it is changing the daily job of a developer faster than anything I've seen.**
+
+Both halves of that sentence matter. Most of the noise around this question comes from people who only say one of them. So here's how I separate the points of view from what's actually happening, based on building production apps with the team at Appeneure and using coding agents every day.
+
+![What AI automates and what still needs people: AI writes boilerplate, standard functions, tests and translations between languages; people decide what to build, design the system, own security and answer for production](/blog/will-ai-replace-software-developers/automated-vs-human.jpg)
+
+## The two extreme views
+
+### The "doomsday" view
+
+*"AI will write 100% of the code soon, so human developers won't exist."*
+
+You mostly hear this from people selling AI products and from headlines written for clicks. It takes a real trend (AI writes more and more code) and extends it in a straight line to the end of the profession.
+
+### The "denial" view
+
+*"AI writes buggy code, so it's a passing fad and won't change anything."*
+
+This one usually comes from people who tried a tool once, a year or two ago, and haven't looked since. It's true that AI-generated code has bugs. It's not true that this makes the tools irrelevant: human-written code has bugs too, and we built reviews and tests to deal with that.
+
+Both views are comfortable, because both tell you that you don't need to change. Neither matches what I see in real projects.
+
+## What's actually happening
+
+The numbers are hard to argue with. According to [GitHub's Octoverse 2026](https://github.blog/news-insights/octoverse/octoverse-commits-pushes-reach-new-highs-in-2026-as-developers-build-with-agents/), by September 2026 more than 40% of pull requests on GitHub started with an agent's first draft, up from 17% in March. In the [Stack Overflow 2026 Developer Survey](https://stackoverflow.blog/2026/10/06/the-results-of-the-2026-developer-survey-are-here/), 73% of developers who use AI coding tools use them daily.
+
+So AI is not a fad. But look at what those numbers actually describe, and three things become clear.
+
+### 1. Coding is being automated. Engineering isn't.
+
+Boilerplate, simple scripts, standard functions, tests for well-understood code, translating a feature from one language to another: AI is already much faster at these than I am. I'd be wasting my client's time if I typed them by hand.
+
+But writing code was always a small part of building software. On a typical feature, most of my time goes to everything around the code: understanding what the client actually needs, reading the existing system, deciding where the change belongs, and making sure it doesn't break something else. AI speeds up the typing. It doesn't make those questions go away.
+
+### 2. The hardest parts still need people
+
+These are the parts of the job that AI doesn't do on its own:
+
+- **Turning a vague problem into a clear one.** A client is unlikely to ask for "a geofence with a 150-meter radius, checked on the server". They might say "people keep checking in from the wrong place". Someone has to work out what that means and what to build.
+- **Deciding what *not* to build.** An agent will happily build whatever you ask for. Knowing which feature isn't worth it is a judgment call.
+- **Designing the system.** Where data lives, what runs on the phone and what runs on the server, how the parts fail. These decisions are cheap to make early and expensive to fix later.
+- **Security.** Anything in a mobile app can be read or changed by its user. Knowing that, and designing for it, is still on the engineer (I wrote about [keeping AI API keys out of your app](/blog/react-native-ai-api-key-security)).
+- **Accountability.** When something breaks in production at 2 a.m., someone has to understand it, fix it, and explain it to the client. "The agent wrote it" is not an answer anyone accepts.
+
+I wrote a longer piece on that last point: [AI agents can build it, but who makes sure it's right?](/blog/ai-agents-who-makes-sure-its-right)
+
+### 3. The role is shifting from writer to reviewer and architect
+
+My own work has changed in a clear direction. I type less code and spend more time:
+
+- **Giving agents context:** project rules, commands and conventions, written down so the agent follows them (see my [AGENTS.md guide](/blog/agents-md-guide)).
+- **Reviewing what they produce:** reading tests first, checking new dependencies, checking APIs against current docs. That's a skill in itself, and I wrote a [checklist for reviewing AI-generated code](/blog/how-to-review-ai-generated-code).
+- **Connecting systems:** APIs, payments, notifications, third-party services, and the edge cases between them.
+
+The developer is becoming the person who directs the work, checks it and owns the result, rather than the person who types every line.
+
+## What pushes back: cheaper software means more software
+
+The doomsday view assumes there's a fixed amount of software to write, so if AI writes more of it, fewer people are needed. History suggests the opposite.
+
+When something gets cheaper to produce, people usually want more of it. Economists call this the Jevons paradox, after the observation that more efficient steam engines led to *more* coal being burned, not less. Calculators and spreadsheets didn't end accounting; they changed what accountants spend their time on. Power tools didn't end carpentry.
+
+You can already see this in software. When Shopify [moved its apps back to native](/blog/is-react-native-dying-2026) in 2026, its reasoning was that "agents have reduced the advantages of sharing implementation." In other words, AI made it cheap enough to build each app twice, so Shopify chose to build *more* code, not less. Most product teams have a backlog longer than their budget. Cheaper development means more of that backlog gets built.
+
+That doesn't mean nothing changes for people. Work that was *only* typing code from a clear specification is shrinking, and that affects how junior developers get their first experience. But the demand for people who can decide what to build and make sure it works isn't going away.
+
+## What skills to focus on now
+
+If you're learning to code, worried about your career, or deciding what to learn next, this is what I'd focus on:
+
+1. **Fundamentals, not syntax.** How the web and mobile platforms work, data structures, networking, databases, how things fail. You can't review code you don't understand, and reviewing is now a big part of the job.
+2. **Use AI tools every day.** Learn what they're good at and where they go wrong. The developers who get the most from agents are the ones who know exactly when not to trust them.
+3. **Reading code.** Get good at reading other people's code, including large, old codebases. Agent output is just more code to read.
+4. **System design and security.** These are the decisions that are hardest to undo and that AI is weakest at owning.
+5. **Communication.** Understanding what a client or user actually needs, and explaining trade-offs clearly. This was always valuable; now it's a larger share of the job.
+6. **Ship real things.** A deployed app with real users teaches you what no tutorial does: production bugs, performance on cheap phones, app store reviews, and what happens when you're responsible for something.
+
+## The short version
+
+AI is automating *coding*, not *engineering*. The extremes are both wrong: developers aren't about to disappear, and the tools aren't a fad. The job is moving from writing every line to deciding what to build, directing the tools, reviewing their work and owning the result. If you build those skills, AI makes you faster, not unnecessary.
+
+## FAQ
+
+### Will AI replace software developers?
+
+Not in the foreseeable future. AI is automating a growing share of code writing, but software development also means understanding problems, designing systems, ensuring security and taking responsibility for production. Those still need people. The role is changing, not disappearing.
+
+### Is software engineering still a good career in 2026?
+
+Yes, if you're prepared for the job to change. Demand for people who can design, review and own software remains strong, and AI tools make skilled developers more productive. Work that was only typing code from clear instructions is shrinking.
+
+### Should I still learn to code if AI can write code?
+
+Yes. You need to understand code to judge whether AI-generated code is correct, secure and maintainable. Learning to code now means learning fundamentals and learning to work with AI tools, not memorizing syntax.
+
+### What developer skills are most valuable with AI?
+
+Fundamentals, code review, system design, security, clear communication with clients and users, and experience shipping and maintaining real products.
