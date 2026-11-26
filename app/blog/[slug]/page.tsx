@@ -9,7 +9,7 @@ import PostCta from "@/components/PostCta";
 import TableOfContents from "@/components/TableOfContents";
 import { formatPostDate, getHeadings, getPost, getPosts, getRelatedPosts } from "@/lib/blog";
 import { profile, SITE_URL } from "@/lib/data";
-import { reactNativeGuide, reactNativeGuideSlugs } from "@/lib/guides";
+import { guidePath, guidesForPost } from "@/lib/guides";
 
 // Posts only change through a deploy (a commit from the editor), so every page is built ahead of time.
 export const dynamicParams = false;
@@ -107,16 +107,16 @@ export default async function BlogPost({ params }: { params: Promise<{ slug: str
         <PostBody node={post.node} />
       </div>
 
-      {reactNativeGuideSlugs.has(post.slug) ? (
-        <Link href={reactNativeGuide.path} className="guide-link">
+      {guidesForPost(post.slug).map((guide, index) => (
+        <Link key={guide.slug} href={guidePath(guide)} className={index ? "guide-link mt-3" : "guide-link"}>
           <BookOpen className="size-5 shrink-0 text-accent" aria-hidden="true" />
           <span className="min-w-0 flex-1">
             <span className="block text-sm text-muted">Part of the guide</span>
-            <span className="block font-medium text-foreground">{reactNativeGuide.title}: a practical guide</span>
+            <span className="block font-medium text-foreground">{guide.title}: a practical guide</span>
           </span>
           <ArrowRight className="size-4 shrink-0 text-muted" aria-hidden="true" />
         </Link>
-      ) : null}
+      ))}
 
       <PostCta />
 

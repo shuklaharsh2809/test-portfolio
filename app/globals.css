@@ -1848,6 +1848,40 @@
     border-color: var(--border-strong);
   }
 
+  .cs-h2 {
+    font-size: 1.6rem;
+    font-weight: 600;
+    letter-spacing: -0.03em;
+    color: var(--foreground);
+  }
+
+  .cs-shots {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.75rem;
+    margin-top: 2.5rem;
+    border-radius: 28px;
+    background: color-mix(in srgb, var(--shot-bg) 55%, var(--tile));
+    padding: 1.25rem;
+  }
+
+  @media (min-width: 640px) {
+    .cs-shots {
+      gap: 1.25rem;
+      padding: 2rem;
+    }
+  }
+
+  .cs-shot {
+    position: relative;
+    aspect-ratio: 9 / 19;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    background: var(--tile);
+    box-shadow: var(--shadow);
+  }
+
   /* Motion: the hero rises on load with CSS; sections reveal on scroll once
      JS is ready. Everything stays visible without JS or with reduced motion. */
 

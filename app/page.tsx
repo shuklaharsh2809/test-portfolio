@@ -38,6 +38,7 @@ import PipelineDemo from "@/components/PipelineDemo";
 import Reveal from "@/components/Reveal";
 import TechIcon from "@/components/TechIcon";
 import { getPosts } from "@/lib/blog";
+import { getCaseStudy } from "@/lib/case-studies";
 import { builds, education, experience, links, principles, profile, projects, SITE_URL, skills } from "@/lib/data";
 
 const personStructuredData = {
@@ -321,6 +322,13 @@ export default async function Home() {
                       <StoreBadge key={link.href} label={link.label} href={link.href} />
                     ))}
                   </div>
+
+                  {getCaseStudy(project.slug) ? (
+                    <Link href={`/work/${project.slug}`} className="mt-5 inline-flex items-center gap-1.5 text-sm font-medium text-accent hover:underline">
+                      Read the case study
+                      <ArrowRight className="size-4" aria-hidden="true" />
+                    </Link>
+                  ) : null}
                 </div>
 
                 <div className="stage" aria-hidden="true">
