@@ -28,7 +28,11 @@ export const guides: readonly Guide[] = [
         title: "Architecture and security",
         intro:
           "Decide early what lives on the phone and what lives on the server. Anything in the app can be read or changed by its user, so secrets and important decisions belong on the server.",
-        slugs: ["react-native-ai-api-key-security", "multi-tenant-saas-data-isolation"],
+        slugs: [
+          "react-native-ai-api-key-security",
+          "expo-router-data-loaders-tutorial",
+          "multi-tenant-saas-data-isolation",
+        ],
       },
       {
         title: "Features users rely on",

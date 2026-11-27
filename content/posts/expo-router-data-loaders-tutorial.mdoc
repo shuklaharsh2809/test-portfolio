@@ -1,0 +1,271 @@
+---
+title: 'Expo Router Data Loaders: Fetch Data on the Server (SDK 58 Tutorial)'
+summary: >-
+  Data loaders are stable in Expo SDK 58. How to fetch data on the server with loader and useLoaderData, handle errors, cache responses, and use them in native apps.
+publishedAt: 2026-11-27
+draft: false
+tags:
+  - Expo
+  - React Native
+  - Expo Router
+  - Tutorial
+cover: /blog/expo-router-data-loaders-tutorial/cover.jpg
+---
+Expo SDK 58 made **data loaders** stable in Expo Router. A route file can now export a `loader` function that runs **on the server**, and the screen reads its result with the `useLoaderData` hook. No experimental flag, no separate API layer for simple reads.
+
+It's the same idea as loaders in Remix and React Router, but in a framework that also targets iOS and Android, so there are a few things that work differently from the web. This tutorial covers the setup, typed loaders, errors, caching, and what happens in native apps, with every snippet checked against `expo-router` 58 and `expo-server` 58. (If you haven't upgraded yet, start with my [Expo SDK 58 upgrade guide](/blog/expo-sdk-58-upgrade-guide).)
+
+![How a data loader works: on the web, the server runs the loader and embeds the data in the HTML; on later navigation and in native apps, the client fetches /_expo/loaders/<route> and the server runs the loader again; secrets stay on the server in both cases](/blog/expo-router-data-loaders-tutorial/loader-flow.jpg)
+
+## Why use data loaders?
+
+- **Secrets stay on the server.** A loader can use `process.env` API keys, and `loader` exports are removed from the client bundle. Anything shipped inside an app can be extracted, so this matters (see [how to keep AI API keys out of your React Native app](/blog/react-native-ai-api-key-security)).
+- **Data arrives with the page on the web.** With server or static rendering, the loader's result is embedded in the HTML, so the first render already has data. That's good for speed and for search engines.
+- **Less code.** No `useEffect`, loading flags, and an API route just to read data for one screen. The loader lives next to the screen that uses it, and `useLoaderData<typeof loader>()` infers its type.
+
+## Setup
+
+Loaders need static or server output for the web. SDK 58 projects already default to `"server"` when `web.output` isn't set, but setting it explicitly makes the choice visible:
+
+```json
+{
+  "expo": {
+    "web": {
+      "output": "server"
+    }
+  }
+}
+```
+
+Pick the mode based on when your data changes:
+
+| | Static (`"static"`) | Server (`"server"`) |
+| --- | --- | --- |
+| Loader runs | Once, at `npx expo export` | On every request |
+| `request` argument | `undefined` | The incoming request |
+| Good for | Docs, marketing, content that changes with deploys | Personalized or frequently changing data |
+
+In SDK 55 to 57, loaders were experimental and needed `unstable_useServerDataLoaders` in the `expo-router` plugin. In SDK 58 that flag is no longer needed.
+
+## Your first loader
+
+Here's a product list that calls a private API with a server-side key:
+
+```tsx
+// src/app/products/index.tsx
+import { Suspense } from "react";
+import { Text, View } from "react-native";
+import { Link, useLoaderData } from "expo-router";
+import type { LoaderFunction } from "expo-router/server";
+
+type Product = { id: string; name: string; price: number };
+
+export const loader: LoaderFunction<Product[]> = async () => {
+  const response = await fetch("https://api.example.com/products", {
+    headers: { Authorization: `Bearer ${process.env.STORE_API_KEY}` },
+  });
+  if (!response.ok) {
+    throw new Error(`Products request failed: ${response.status}`);
+  }
+  return response.json();
+};
+
+export default function ProductsScreen() {
+  return (
+    <View>
+      <Text>Products</Text>
+      <Suspense fallback={<Text>Loading products…</Text>}>
+        <ProductList />
+      </Suspense>
+    </View>
+  );
+}
+
+function ProductList() {
+  const products = useLoaderData<typeof loader>(); // Product[]
+  return products.map((product) => (
+    <Link key={product.id} href={`/products/${product.id}`}>
+      {product.name} · ${product.price}
+    </Link>
+  ));
+}
+```
+
+A few things to notice:
+
+- **`STORE_API_KEY` has no `EXPO_PUBLIC_` prefix.** Only `EXPO_PUBLIC_` variables are inlined into the app bundle; this one is read on the server, inside the loader.
+- **`useLoaderData` suspends while data is loading.** Wrap the component that calls it in `<Suspense>` and you control exactly where the loading state appears. The hook works in any component inside the route, not only the route component.
+- **Typing the loader with `LoaderFunction<Product[]>`** gives `useLoaderData<typeof loader>()` the right type, even though `response.json()` returns `any`.
+
+## Dynamic routes and typed params
+
+Loaders receive the route params. The `createStaticLoader` helper from `expo-router/server` types a loader that only needs params, and it works with both static and server output:
+
+```tsx
+// src/app/products/[id].tsx
+import { Text, View } from "react-native";
+import { useLoaderData, type ErrorBoundaryProps } from "expo-router";
+import { createStaticLoader } from "expo-router/server";
+import { StatusError } from "expo-server";
+
+type Product = { id: string; name: string; price: number };
+
+export const loader = createStaticLoader(async (params) => {
+  const id = params.id;
+  if (typeof id !== "string") {
+    throw new StatusError(400, "Invalid product id");
+  }
+
+  const response = await fetch(`https://api.example.com/products/${encodeURIComponent(id)}`, {
+    headers: { Authorization: `Bearer ${process.env.STORE_API_KEY}` },
+  });
+  if (response.status === 404) {
+    throw new StatusError(404, "Product not found");
+  }
+  if (!response.ok) {
+    throw new Error(`Product request failed: ${response.status}`);
+  }
+  return (await response.json()) as Product;
+});
+
+export function ErrorBoundary({ retry }: ErrorBoundaryProps) {
+  return (
+    <View>
+      <Text>We couldn't load this product.</Text>
+      <Text onPress={retry}>Try again</Text>
+    </View>
+  );
+}
+
+export default function ProductScreen() {
+  const product = useLoaderData<typeof loader>();
+  return (
+    <View>
+      <Text>{product.name}</Text>
+      <Text>${product.price}</Text>
+    </View>
+  );
+}
+```
+
+Two details that trip people up:
+
+- **Params are typed `string | string[]`**, because catch-all routes like `[...slug]` produce arrays. Narrow the value before you use it, as above.
+- **A thrown error goes to the route's `ErrorBoundary`.** When the client fetches loader data and the server responds with an error, the client sees a generic `Failed to fetch loader data: 404` error, not your `StatusError` message. So show a user-friendly message in the boundary instead of rendering `error.message`. `StatusError` from `expo-server` still matters: it sets the status code of the loader's HTTP response, so caches and your server logs see a real 404 instead of a generic failure.
+
+## Caching loader responses
+
+Since SDK 58, Expo Router doesn't keep loader data in a permanent in-memory cache. When you return to a route after it unmounts, `useLoaderData` fetches again, and the platform's HTTP cache decides whether to reuse a response, based on `Cache-Control`. Without a header, loader responses default to `no-store` on the server.
+
+To cache, return a `Response` with a JSON body and a `Cache-Control` header:
+
+```tsx
+import { Text } from "react-native";
+import { useLoaderData } from "expo-router";
+import type { LoaderFunction } from "expo-router/server";
+
+type Product = { id: string; name: string; price: number };
+
+export async function loader() {
+  const response = await fetch("https://api.example.com/products");
+  const products: Product[] = await response.json();
+
+  return Response.json(products, {
+    headers: { "Cache-Control": "public, max-age=60" },
+  });
+}
+
+function ProductList() {
+  // typeof loader would infer Response here, so name the data type instead.
+  const products = useLoaderData<LoaderFunction<Product[]>>();
+  return <Text>{products.length} products</Text>;
+}
+```
+
+The comment is the catch: **when a loader returns a `Response`, `useLoaderData<typeof loader>()` infers `Response`**, even though the hook gives you the parsed JSON at runtime. Pass `LoaderFunction<YourData>` as the type parameter instead.
+
+And the rule that matters most: **use `public` only for data that's the same for every user.** For anything personal, use `private` or `no-store`, or a shared cache can serve one user's data to another.
+
+## Personalized data with createServerLoader
+
+With server output, a loader can read the incoming request: headers, cookies, the URL. `createServerLoader` types the request as always present, and throws if you accidentally use it during a static export:
+
+```tsx
+// src/app/account/orders.tsx
+import { createServerLoader } from "expo-router/server";
+import { setResponseHeaders, StatusError } from "expo-server";
+
+type Order = { id: string; total: number };
+
+export const loader = createServerLoader(async (request) => {
+  const cookie = request.headers.get("Cookie");
+  if (!cookie) {
+    throw new StatusError(401, "Sign in required");
+  }
+
+  setResponseHeaders({ "Cache-Control": "private, no-store" });
+
+  const response = await fetch("https://api.example.com/me/orders", {
+    headers: { Cookie: cookie },
+  });
+  if (!response.ok) {
+    throw new StatusError(response.status, "Could not load orders");
+  }
+  return (await response.json()) as Order[];
+});
+```
+
+This works naturally on the web, where the browser sends its cookies with the page request and with same-origin fetches. On native, read the next section first.
+
+## Data loaders in native apps
+
+On iOS and Android, a loader **still runs on the server**, never on the phone. There's no server rendering on native, so the first time a route renders, `useLoaderData` fetches `/_expo/loaders/<route>` from your server and suspends until the data arrives. That's why the `<Suspense>` boundary matters even more on native.
+
+What this means in practice:
+
+- **In development**, the app fetches from the dev server that `npx expo start` runs, so it just works.
+- **In production, you need a deployed server.** Deploy it (for example with EAS Hosting), and point the app at it with the `origin` option of the `expo-router` config plugin. Expo also has an experimental way to deploy the server automatically during `eas build`; its docs mark native deployment as alpha.
+- **Version your server with your app.** Old app builds stay on people's phones for months. If a store build expects a loader's data in one shape and you deploy a server that returns another, old builds break. Keep loader responses backward compatible, the same way you would with any API.
+- **Authentication is your job.** The router fetches loader data with a plain request that only adds an `Accept: application/json` header; it doesn't attach your app's auth token. For signed-in data in a native app, I'd use an API route or your own backend with an explicit token until you've tested exactly how your auth reaches the loader.
+
+## Known limitations
+
+From the Expo docs:
+
+- Loaders must return JSON-serializable data or a `Response` with a JSON body. **Streaming loader data isn't supported**, so for AI responses use an API route ([how to stream AI responses in React Native](/blog/react-native-stream-ai-responses)).
+- There's **no public API to invalidate** loader data for a route that stays mounted.
+- A `loader` in a native-only file such as `index.ios.tsx` doesn't run. Put it in `index.web.tsx` or `index.tsx`.
+
+## When I'd use loaders, and when I wouldn't
+
+**I'd use data loaders for:**
+
+- Expo apps that also ship a **web version**, where server rendering and SEO matter.
+- **Public, read-heavy screens:** catalogs, articles, help content, anything cacheable.
+- Screens that need a **secret** to read data and don't justify a separate backend endpoint.
+
+**I'd keep a client data library (like TanStack Query) and my own API for:**
+
+- **Mobile-first apps with offline needs,** where the app should show cached data without a network.
+- **Frequent mutations and optimistic updates,** which loaders don't handle.
+- **Signed-in data on native,** for the authentication reasons above.
+
+Many apps will use both: loaders for public, web-facing routes, and a client data layer for the signed-in experience.
+
+## FAQ
+
+### Are Expo Router data loaders stable?
+
+Yes. Data loaders, server rendering and middleware are stable as of Expo SDK 58 and no longer need experimental flags. In SDK 55 to 57, you had to enable `unstable_useServerDataLoaders`.
+
+### Do data loaders run on the device?
+
+No. Loaders always run on the server. On the web, the data is embedded in the server-rendered HTML; on native, the app fetches it from your deployed server.
+
+### Can I use secrets and API keys in a loader?
+
+Yes. Loaders run on the server and `loader` exports are removed from the client bundle, so `process.env` secrets aren't exposed. Don't give secrets the `EXPO_PUBLIC_` prefix, which inlines them into the app.
+
+### Why does useLoaderData return a Response type?
+
+Because your loader returns `Response.json(...)`, and `typeof loader` infers its return type. Use `useLoaderData<LoaderFunction<YourData>>()` to type the parsed data instead.
