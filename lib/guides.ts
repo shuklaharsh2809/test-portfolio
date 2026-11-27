@@ -97,8 +97,9 @@ export const guides: readonly Guide[] = [
       },
       {
         title: "Keeping AI products safe",
-        intro: "API keys, quotas and validation: the security basics every AI feature needs before it reaches users.",
-        slugs: ["react-native-ai-api-key-security"],
+        intro:
+          "API keys, validation and tools that are safe to retry: the basics every AI feature needs before it reaches users.",
+        slugs: ["react-native-ai-api-key-security", "ai-agent-tool-call-retries-idempotency"],
       },
     ],
   },

@@ -1,0 +1,301 @@
+---
+title: 'Your AI Agent Retried the Tool Call: How to Make Agent Tools Safe to Retry'
+summary: >-
+  Agents retry tool calls, and a retry after a lost response can charge a card twice. A practical TypeScript guide to idempotent agent and MCP tools.
+publishedAt: 2026-11-27
+draft: false
+tags:
+  - AI
+  - AI Agents
+  - MCP
+  - TypeScript
+cover: /blog/ai-agent-tool-call-retries-idempotency/cover.jpg
+---
+One of the most-discussed posts on dev.to this week has a title that makes every backend engineer wince: [*Your AI Agent Retried the Tool Call. The First One Had Already Succeeded.*](https://dev.to/rudratosh/your-ai-agent-retried-the-tool-call-the-first-one-had-already-succeeded-3pke) An agent pays an invoice, the payment goes through, the response gets lost, the tool times out, and the agent helpfully tries again. Two charges, one request.
+
+That post explains *why* this happens very well. Its key line: a timeout tells you what the caller observed, not what the server committed. This post is the practical companion: how to build agent tools in TypeScript that are **safe to call twice**, with code I've type-checked against the MCP TypeScript SDK (2.4.0), Stripe's Node library and `pg`, and tested against a real Postgres engine.
+
+![Without idempotency, a retry after a lost response charges the card twice; with an idempotency key derived from the invoice, the retry returns the saved result](/blog/ai-agent-tool-call-retries-idempotency/retry-flow.jpg)
+
+## Why agents make retries worse
+
+Retries aren't new. What's new is how many layers can repeat a single action:
+
+- **Your HTTP client or SDK** retrying a timed-out request.
+- **Your tool framework or queue** redelivering a job after a worker restarts.
+- **The model itself**, which sees `Error: request timed out` and decides, reasonably, to call the tool again.
+
+That last one is the trap. A model-level retry is a **new tool call** with a new call ID. If your deduplication is keyed on the call ID or a random UUID generated per call, it does nothing here: to your server, the second call looks like a brand-new request.
+
+So the question isn't "how do I stop retries?" You can't, and you shouldn't, because retries are how systems recover from real failures. The question is: **how do I make a repeated call harmless?**
+
+## The fix: idempotency, keyed on the action
+
+An operation is *idempotent* if doing it twice has the same effect as doing it once. Payment providers solved this years ago with **idempotency keys**: the client sends a unique key with a request, and the server recognizes later retries with the same key. Stripe, for example, saves the result of the first request for a key and returns it for retries, keeps keys for at least 24 hours, and returns an error if a key is reused with different parameters ([Stripe docs](https://docs.stripe.com/api/idempotent_requests)). There's also an IETF draft standardizing an [`Idempotency-Key` HTTP header](https://datatracker.ietf.org/doc/draft-ietf-httpapi-idempotency-key-header/), still a working-group draft.
+
+For agent tools, the important decision is **where the key comes from**. Three options, from best to worst:
+
+1. **A business key.** If the action can only happen once per thing, use the thing: `pay_invoice:INV-2048`. An invoice is paid once, no matter how many times or by whom the tool is called. This also catches the model retrying, because the arguments are the same.
+2. **A server-issued operation ID.** For actions with no natural key ("send this message"), split the tool in two: `draft_message` returns an `operationId`, and `send_message(operationId)` does the work. The ID sits in the conversation, so when the model retries the send, it reuses the same ID.
+3. **A key the model invents.** Avoid this. Nothing guarantees the model will send the same key on a retry.
+
+## Step 1: Record every operation
+
+Store each side-effecting operation in a table, keyed on the idempotency key:
+
+```sql
+create table tool_operations (
+  key text primary key,
+  args_hash text not null,
+  status text not null check (status in ('pending', 'succeeded', 'failed')),
+  result jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+```
+
+The primary key is what makes this work under concurrency: if two calls arrive at the same moment, the database lets exactly one of them insert the row.
+
+## Step 2: A runOnce helper
+
+`runOnce` claims the key, does the work once, and saves the result. Every later call with the same key gets the saved result back:
+
+```ts
+// run-once.ts
+import { createHash } from "node:crypto";
+import { Pool } from "pg";
+
+export const db = new Pool({ connectionString: process.env.DATABASE_URL });
+
+export type Outcome<T> =
+  | { status: "done"; result: T; replayed: boolean }
+  | { status: "in_progress" };
+
+const hashArgs = (args: unknown) =>
+  createHash("sha256").update(JSON.stringify(args)).digest("hex");
+
+export async function runOnce<T>(
+  key: string,
+  args: unknown,
+  fn: (key: string) => Promise<T>,
+): Promise<Outcome<T>> {
+  const argsHash = hashArgs(args);
+
+  // 1. Claim the key. Only one caller can insert it; everyone else gets zero rows back.
+  const claimed = await db.query(
+    `insert into tool_operations (key, args_hash, status)
+     values ($1, $2, 'pending')
+     on conflict (key) do nothing
+     returning key`,
+    [key, argsHash],
+  );
+
+  if (claimed.rowCount === 0) {
+    const { rows } = await db.query(
+      `select args_hash, status, result, updated_at < now() - interval '2 minutes' as stale
+       from tool_operations where key = $1`,
+      [key],
+    );
+    const existing = rows[0];
+
+    if (existing.args_hash !== argsHash) {
+      throw new Error(`Key ${key} was already used with different arguments.`);
+    }
+    if (existing.status === "succeeded") {
+      return { status: "done", result: existing.result as T, replayed: true };
+    }
+
+    // 2. A pending row that's been stuck for minutes means the first attempt crashed or lost
+    //    its response. Take it over only if no one else has; failed rows can always be retried.
+    const takeover = await db.query(
+      `update tool_operations set status = 'pending', updated_at = now()
+       where key = $1 and (status = 'failed' or (status = 'pending' and $2::boolean))
+       returning key`,
+      [key, existing.stale === true],
+    );
+    if (takeover.rowCount === 0) {
+      return { status: "in_progress" };
+    }
+  }
+
+  // 3. Do the work, then record the result.
+  try {
+    const result = await fn(key);
+    await db.query(
+      `update tool_operations set status = 'succeeded', result = $2, updated_at = now() where key = $1`,
+      [key, JSON.stringify(result)],
+    );
+    return { status: "done", result, replayed: false };
+  } catch (error) {
+    await db.query(
+      `update tool_operations set status = 'failed', updated_at = now() where key = $1`,
+      [key],
+    );
+    throw error;
+  }
+}
+```
+
+I ran this against Postgres (via PGlite) to check each case:
+
+| Situation | Result |
+| --- | --- |
+| Two identical calls at the same moment | The work runs **once**; the second call gets `in_progress` |
+| Same call after success | Saved result, `replayed: true`, work not run again |
+| Same key, different arguments | Error |
+| Retry after a failure | Runs again |
+| Retry after a crash (stuck `pending` for 2+ minutes) | Takes over and runs again |
+| Retry while the first attempt is still running | `in_progress`, work not run |
+
+## Step 3: Pass the key downstream
+
+There's still a gap. If your server crashes *after* Stripe charges the card but *before* it saves `succeeded`, the row ends up `failed` or stuck in `pending`, and a retry runs the work again. Your table alone can't close that gap, because the side effect happened somewhere else.
+
+The fix is to **pass the same key to the downstream API**. That's why `fn` receives the key. If the payment already went through, Stripe recognizes the key and returns the original payment instead of creating a second one. Your table protects your system; the provider's idempotency protects theirs. You need both.
+
+## Step 4: The MCP tool
+
+Here's a billing MCP server with a `pay_invoice` tool built on `runOnce`:
+
+```ts
+// tools.ts
+import { McpServer } from "@modelcontextprotocol/server";
+import Stripe from "stripe";
+import * as z from "zod/v4";
+import { db, runOnce } from "./run-once.js";
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+const server = new McpServer({ name: "billing", version: "1.0.0" });
+
+type Invoice = {
+  id: string;
+  amount_cents: number;
+  currency: string;
+  customer_id: string;
+  payment_method_id: string;
+};
+
+async function getInvoice(invoiceId: string): Promise<Invoice | undefined> {
+  const { rows } = await db.query<Invoice>(
+    `select id, amount_cents, currency, customer_id, payment_method_id from invoices where id = $1`,
+    [invoiceId],
+  );
+  return rows[0];
+}
+
+const reply = (data: Record<string, unknown>, isError = false) => ({
+  content: [{ type: "text" as const, text: JSON.stringify(data) }],
+  structuredContent: data,
+  isError,
+});
+
+server.registerTool(
+  "pay_invoice",
+  {
+    description:
+      "Charge the customer's saved card for an invoice. Safe to call again for the same invoice: " +
+      "it never charges twice. If the result is status 'in_progress', do not call again; " +
+      "call get_payment_status instead.",
+    inputSchema: z.object({ invoiceId: z.string().regex(/^INV-\d+$/) }),
+    annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async ({ invoiceId }) => {
+    const invoice = await getInvoice(invoiceId);
+    if (!invoice) return reply({ error: `Invoice ${invoiceId} was not found.` }, true);
+
+    // The key comes from the business action, not the tool call: one invoice is paid once.
+    const outcome = await runOnce(`pay_invoice:${invoice.id}`, { invoiceId }, (key) =>
+      stripe.paymentIntents
+        .create(
+          {
+            amount: invoice.amount_cents,
+            currency: invoice.currency,
+            customer: invoice.customer_id,
+            payment_method: invoice.payment_method_id,
+            off_session: true,
+            confirm: true,
+          },
+          { idempotencyKey: key },
+        )
+        .then((intent) => ({ paymentIntentId: intent.id, paymentStatus: intent.status })),
+    );
+
+    if (outcome.status === "in_progress") {
+      return reply({
+        status: "in_progress",
+        message: "This payment is already being processed. Do not retry; check get_payment_status.",
+      });
+    }
+    return reply({
+      status: outcome.replayed ? "already_paid" : "paid",
+      invoiceId,
+      ...outcome.result,
+    });
+  },
+);
+
+server.registerTool(
+  "get_payment_status",
+  {
+    description: "Check whether an invoice has been paid. Use after a timeout or an 'in_progress' result.",
+    inputSchema: z.object({ invoiceId: z.string().regex(/^INV-\d+$/) }),
+    annotations: { readOnlyHint: true },
+  },
+  async ({ invoiceId }) => {
+    const { rows } = await db.query(`select status, result from tool_operations where key = $1`, [
+      `pay_invoice:${invoiceId}`,
+    ]);
+    return reply({ invoiceId, status: rows[0]?.status ?? "not_started", result: rows[0]?.result ?? null });
+  },
+);
+```
+
+The details that matter:
+
+- **The model sends only the invoice ID.** The amount, currency and card come from your database. Model output is untrusted input; never let it choose how much to charge. (Same principle as in my [MCP server tutorial](/blog/mcp-server-typescript-tutorial): the schema is your security boundary.)
+- **Results tell the model what happened.** `already_paid` is a success, not an error, so the model has no reason to try again. `in_progress` says explicitly *don't retry, check the status*, and there's a read-only tool to do that.
+- **The description says the tool is safe to repeat.** Tool descriptions are prompts; telling the model how retries behave changes what it does after a timeout.
+
+## About MCP tool annotations
+
+MCP lets a tool declare `idempotentHint: true`, meaning repeated calls with the same arguments have no additional effect (the default is `false`). Set it when it's true, because clients can use it to decide how carefully to treat a tool.
+
+But don't confuse the label with the behavior. The [MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/schema) says annotations are **hints**, not guarantees, and that clients should never make tool-use decisions based on annotations from untrusted servers. Setting `idempotentHint: true` doesn't make a tool idempotent; the code above does.
+
+## When a failure is final
+
+Idempotency means a retry returns *the same result*, including a failure. With Stripe's v1 API, retrying with the same key returns the saved response, even a `500` error, as long as execution had started. And if a card is declined, retrying the same key won't try the card again.
+
+So decide what counts as a **new attempt**. If the customer updates their card and you really do want to charge again, that's a different operation and needs a different key, for example `pay_invoice:INV-2048:attempt-2`, created deliberately by your code, not by the model.
+
+## Checklist for every side-effecting tool
+
+- Does a repeated call (same arguments, new call ID) do nothing extra?
+- Is the key derived from the **action** (business key or server-issued ID), not the call?
+- Is the **same key passed to downstream APIs** that support idempotency?
+- Do the tool's results distinguish **done**, **already done** and **still in progress**?
+- Is there a **read-only status tool** the model can use after a timeout?
+- Does the model send only identifiers, with amounts and targets read on the server?
+- Is the stale-`pending` timeout longer than the slowest real execution?
+
+## The bigger lesson
+
+This isn't really an AI problem; it's a distributed-systems problem that AI agents make more common. Every tool you give an agent is an API with a very enthusiastic client that retries, rephrases and runs in parallel. Design tools the way you'd design a payments API, and review agent-written tool code with exactly that question in mind (I wrote a [checklist for reviewing AI-generated code](/blog/how-to-review-ai-generated-code)).
+
+## FAQ
+
+### Why do AI agents duplicate actions?
+
+Because a timeout or lost response looks like a failure to the agent, so it retries, but the first call may have already succeeded on the server. Retries can also come from HTTP clients, queues and frameworks underneath the agent.
+
+### What is an idempotency key?
+
+A unique key sent with a request so the server can recognize retries of the same operation and return the original result instead of doing the work again. Stripe and many other APIs support them.
+
+### Can I use the tool call ID as the idempotency key?
+
+Not on its own. When the model decides to retry, it makes a new tool call with a new ID. Use a key derived from the action, such as the invoice ID, or an operation ID your server issued earlier in the conversation.
+
+### Does MCP's idempotentHint make a tool idempotent?
+
+No. Annotations are hints that describe intended behavior, and clients shouldn't trust them from untrusted servers. Idempotency has to be implemented in the tool's code.
